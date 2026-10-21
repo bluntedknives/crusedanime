@@ -52,7 +52,7 @@ export default function WatchlistButton({
             'inline-flex items-center gap-2 font-medium transition',
             sizes,
             inList
-              ? 'bg-brand text-white hover:bg-brand-soft'
+              ? 'bg-accent text-white hover:bg-accent-soft'
               : 'border border-white/15 bg-white/5 text-zinc-100 hover:bg-white/10',
             showStatusMenu && inList ? 'rounded-l-lg rounded-r-none' : 'rounded-lg',
           ].join(' ')}
@@ -68,7 +68,7 @@ export default function WatchlistButton({
             type="button"
             aria-label="Change status"
             onClick={() => setMenuOpen((v) => !v)}
-            className={`${sizes} rounded-l-none rounded-r-lg border-l border-white/20 bg-brand px-2.5 text-white hover:bg-brand-soft`}
+            className={`${sizes} rounded-l-none rounded-r-lg border-l border-white/20 bg-accent px-2.5 text-white hover:bg-accent-soft`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M6 9l6 6 6-6" />
@@ -80,7 +80,7 @@ export default function WatchlistButton({
       {menuOpen && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-          <div className="absolute left-0 top-[calc(100%+6px)] z-50 w-44 overflow-hidden rounded-lg border border-white/10 bg-ink-850 shadow-2xl">
+          <div className="absolute left-0 top-[calc(100%+6px)] z-50 w-44 overflow-hidden rounded-lg border border-white/10 bg-base-850 shadow-2xl">
             {STATUSES.map((s) => (
               <button
                 key={s.value}
@@ -92,7 +92,7 @@ export default function WatchlistButton({
                 className={[
                   'block w-full px-3 py-2 text-left text-[13px] transition',
                   entry?.status === s.value
-                    ? 'bg-white/10 text-brand-soft'
+                    ? 'bg-white/10 text-accent-soft'
                     : 'text-zinc-200 hover:bg-white/5',
                 ].join(' ')}
               >

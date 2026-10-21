@@ -14,11 +14,19 @@ export default function GlobalError({
     console.error('[anistream]', error)
   }, [error])
 
+  const upstreamDown = /AniList|upstream|fetch failed|ECONN|socket|timeout/i.test(error.message)
+
   return (
     <div className="container-page grid min-h-[60vh] place-items-center pt-10">
       <div className="max-w-md text-center">
-        <h1 className="text-xl font-bold text-zinc-100">Something broke while rendering</h1>
-        <p className="mt-2 break-words text-sm text-zinc-400">{error.message}</p>
+        <h1 className="text-xl font-bold text-zinc-100">
+          {upstreamDown ? 'AniList is unavailable' : 'Something broke while rendering'}
+        </h1>
+        <p className="mt-2 break-words text-sm text-zinc-400">
+          {upstreamDown
+            ? 'The metadata provider is not responding right now. This is usually temporary — try again in a moment.'
+            : error.message}
+        </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button type="button" onClick={reset} className="btn-primary">
             Try again

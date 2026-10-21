@@ -5,6 +5,7 @@ import Link from 'next/link'
 import EpisodeList from './EpisodeList'
 import type { EpisodeInfo } from '@/lib/consumet'
 import { useProgress, usePrefs } from '@/lib/store'
+import { coverLabel } from '@/lib/cover'
 
 interface Props {
   animeId: number
@@ -14,6 +15,8 @@ interface Props {
   totalEpisodes: number | null
   /** Airing titles have no provider entry yet; show a hint instead of an error. */
   status: string | null
+  /** Restricted mode: relabel headings before render, not after. */
+  covered?: boolean
 }
 
 export default function EpisodeSection({
@@ -23,6 +26,7 @@ export default function EpisodeSection({
   altTitles,
   totalEpisodes,
   status,
+  covered = false,
 }: Props) {
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -70,7 +74,7 @@ export default function EpisodeSection({
     <section id="episodes" className="surface p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="section-title">Episodes</h2>
+          <h2 className="section-title">{coverLabel('Episodes', covered)}</h2>
           <p className="mt-0.5 text-xs text-zinc-500">
             {loading
               ? 'Resolving from provider…'
@@ -91,7 +95,7 @@ export default function EpisodeSection({
                 disabled={t === 'dub' && !episodes.some((e) => e.hasDub)}
                 className={[
                   'px-3 py-1.5 text-[12px] font-semibold uppercase transition disabled:opacity-40',
-                  type === t ? 'bg-brand text-white' : 'text-zinc-300 hover:bg-white/5',
+                  type === t ? 'bg-accent text-white' : 'text-zinc-300 hover:bg-white/5',
                 ].join(' ')}
               >
                 {t}

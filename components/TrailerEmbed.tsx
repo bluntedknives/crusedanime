@@ -2,12 +2,15 @@
 
 import { useState } from 'react'
 
+import { coverLabel } from '@/lib/cover'
+
 interface Props {
   trailer: { id: string | null; site: string | null } | null
   title: string
+  covered?: boolean
 }
 
-export default function TrailerEmbed({ trailer, title }: Props) {
+export default function TrailerEmbed({ trailer, title, covered = false }: Props) {
   const [playing, setPlaying] = useState(false)
 
   if (!trailer?.id || !trailer.site) return null
@@ -18,12 +21,12 @@ export default function TrailerEmbed({ trailer, title }: Props) {
   return (
     <section className="surface overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-sm font-semibold text-zinc-100">Trailer</h2>
+        <h2 className="text-sm font-semibold text-zinc-100">{coverLabel('Trailer', covered)}</h2>
         <a
           href={`https://www.youtube.com/watch?v=${trailer.id}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[11px] text-brand-soft hover:text-brand"
+          className="text-[11px] text-accent-soft hover:text-accent"
         >
           Open on YouTube ↗
         </a>

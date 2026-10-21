@@ -31,7 +31,7 @@ export default function Synopsis({ description }: Props) {
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-2 text-xs font-medium text-brand-soft hover:text-brand"
+          className="mt-2 text-xs font-medium text-accent-soft hover:text-accent"
         >
           {expanded ? 'Show less' : 'Read more'}
         </button>

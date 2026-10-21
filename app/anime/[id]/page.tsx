@@ -2,13 +2,14 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import PosterCard from '@/components/PosterCard'
-import WatchlistButton from '@/components/WatchlistButton'
 import AiringCountdown from '@/components/AiringCountdown'
 import Synopsis from '@/components/Synopsis'
 import TrailerEmbed from '@/components/TrailerEmbed'
 import EpisodeSection from '@/components/EpisodeSection'
+import DetailHero from '@/components/DetailHero'
+import * as data from '@/lib/data'
+import PreviewBanner from '@/components/PreviewBanner'
 import {
-  byId,
   formatLabel,
   posterOf,
   scoreOf,
@@ -17,6 +18,8 @@ import {
   titleOf,
   type Media,
 } from '@/lib/anilist'
+import { coverLabel, coverTitle } from '@/lib/cover'
+import { isCovered } from '@/lib/coverServer'
 
 export const revalidate = 600
 
@@ -28,15 +31,19 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { id: rawId } = await params
   const id = Number(rawId)
   if (!Number.isFinite(id)) return { title: 'Not found' }
+  const covered = await isCovered()
   try {
-    const m = await byId(id)
+    const { data: m } = await data.byId(id)
+    if (!m) return { title: 'Not found' }
     return {
-      title: titleOf(m),
+      title: coverTitle(titleOf(m), covered),
       description: stripHtml(m.description).slice(0, 160) || undefined,
-      openGraph: {
-        title: titleOf(m),
-        images: posterOf(m) ? [{ url: posterOf(m) }] : undefined,
-      },
+      openGraph: covered
+        ? undefined
+        : {
+            title: titleOf(m),
+            images: posterOf(m) ? [{ url: posterOf(m) }] : undefined,
+          },
     }
   } catch {
     return { title: 'Not found' }
@@ -45,8 +52,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
-      <dt className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{label}</dt>
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+      <dt className="font-mono text-[0.6rem] uppercase tracking-[0.16em] text-zinc-600">{label}</dt>
       <dd className="mt-0.5 text-sm font-medium text-zinc-100">{value ?? '—'}</dd>
     </div>
   )
@@ -57,28 +64,30 @@ function RelationCard({ edge }: { edge: NonNullable<Media['relations']>['edges']
   return (
     <Link
       href={`/anime/${m.id}`}
-      className="surface group flex gap-2.5 p-2 transition hover:border-white/15 hover:bg-ink-800"
+      className="surface group flex gap-2.5 p-2 transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]"
     >
-      <span className="h-[72px] w-[50px] shrink-0 overflow-hidden rounded bg-ink-700">
+      <span className="h-[72px] w-[50px] shrink-0 overflow-hidden rounded bg-base-700">
         {posterOf(m) ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={posterOf(m)}
             alt=""
             loading="lazy"
-            className="h-full w-full object-cover transition group-hover:scale-105"
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
           />
         ) : null}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-brand-soft">
+        <span className="mb-1 block font-mono text-[0.6rem] uppercase tracking-[0.14em] text-accent-soft">
           {(edge.relationType ?? '').replace(/_/g, ' ').toLowerCase()}
         </span>
-        <span className="line-clamp-2 block text-[12.5px] font-medium leading-snug text-zinc-100 group-hover:text-brand-soft">
+        <span className="line-clamp-2 block text-[12.5px] font-medium leading-snug text-zinc-100 group-hover:text-accent-soft">
           {titleOf(m)}
         </span>
-        <span className="mt-0.5 block text-[10.5px] text-zinc-500">
-          {[formatLabel(m.format), m.seasonYear].filter(Boolean).join(' · ')}
+        <span className="mt-0.5 block font-mono text-[0.6rem] text-zinc-600">
+          {formatLabel(m.format)}
+          {m.seasonYear ? ` · ${m.seasonYear}` : ''}
+          {m.episodes ? ` · ${m.episodes} EP` : ''}
         </span>
       </span>
     </Link>
@@ -86,19 +95,15 @@ function RelationCard({ edge }: { edge: NonNullable<Media['relations']>['edges']
 }
 
 export default async function AnimeDetailPage({ params }: Params) {
+  const covered = await isCovered()
   const { id: rawId } = await params
   const id = Number(rawId)
-  if (!Number.isFinite(id) || id <= 0) notFound()
+  if (!Number.isFinite(id)) notFound()
 
-  let media: Media
-  try {
-    media = await byId(id)
-  } catch {
-    notFound()
-  }
+  const { data: media, preview } = await data.byId(id)
+  if (!media) notFound()
 
   const title = titleOf(media)
-  const poster = posterOf(media)
   const score = scoreOf(media)
   const studios = media.studios?.edges?.map((e) => e.node) ?? []
   const relations = (media.relations?.edges ?? []).filter((e) => e.node?.id && e.node.id !== media.id)
@@ -115,155 +120,108 @@ export default async function AnimeDetailPage({ params }: Params) {
 
   return (
     <div className="animate-fade-in">
-      {/* ------------------------------------------------------------ banner */}
-      <div className="relative">
-        <div className="relative h-[38vh] min-h-[260px] w-full overflow-hidden">
-          {media.bannerImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={media.bannerImage} alt="" className="h-full w-full object-cover" />
-          ) : poster ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={poster} alt="" className="h-full w-full scale-110 object-cover blur-lg" />
-          ) : null}
-          <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/75 to-ink-950/25" />
-        </div>
-      </div>
+      <DetailHero media={media} />
 
-      <div className="container-page -mt-32 sm:-mt-40">
-        <div className="flex flex-col gap-6 md:flex-row">
-          {/* -------------------------------------------------- poster + meta */}
-          <div className="mx-auto w-[190px] shrink-0 md:mx-0 md:w-[230px]">
-            <div className="overflow-hidden rounded-xl bg-ink-800 poster-shadow">
-              {poster ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={poster} alt={title} className="aspect-[2/3] w-full object-cover" />
-              ) : (
-                <div className="grid aspect-[2/3] place-items-center p-4 text-center text-xs text-zinc-500">
-                  {title}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 space-y-2">
-              <WatchlistButton media={media} size="lg" className="w-full [&>div]:w-full [&_button:first-child]:flex-1" />
-              <Link href={`/watch/${media.id}/1`} className="btn-primary w-full">
-                ▶ Watch now
-              </Link>
-            </div>
-
-            <dl className="mt-4 grid grid-cols-2 gap-2">
-              <Stat label="Score" value={score != null ? `${score}%` : '—'} />
-              <Stat label="Rank" value={media.popularity ? `#${media.popularity}` : '—'} />
-              <Stat label="Episodes" value={media.episodes ?? '—'} />
-              <Stat label="Duration" value={media.duration ? `${media.duration}m` : '—'} />
-              <Stat label="Format" value={formatLabel(media.format)} />
-              <Stat label="Status" value={(media.status ?? '—').replace(/_/g, ' ').toLowerCase()} />
-              <Stat label="Season" value={seasonLabel(media.season, media.seasonYear)} />
-              <Stat label="Source" value={media.source ? media.source.replace(/_/g, ' ').toLowerCase() : '—'} />
-            </dl>
-
-            {media.externalLinks?.length ? (
-              <div className="mt-4">
-                <h3 className="label">Links</h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {media.externalLinks.slice(0, 8).map((l) => (
-                    <a
-                      key={l.id}
-                      href={l.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="chip hover:bg-white/10"
-                    >
-                      {l.site}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+      <div className="container-page">
+        {preview && (
+          <div className="mb-4">
+            <PreviewBanner compact />
           </div>
+        )}
+        {/* ------------------------------------------------------- stat strip */}
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          <Stat label="Score" value={score != null ? `${score}%` : '—'} />
+          <Stat label="Popularity" value={media.popularity ? `#${media.popularity}` : '—'} />
+          <Stat label="Episodes" value={media.episodes ?? '—'} />
+          <Stat label="Duration" value={media.duration ? `${media.duration}m` : '—'} />
+          <Stat label="Format" value={formatLabel(media.format)} />
+          <Stat label="Status" value={(media.status ?? '—').replace(/_/g, ' ').toLowerCase()} />
+          <Stat label="Season" value={seasonLabel(media.season, media.seasonYear)} />
+          <Stat
+            label="Source"
+            value={media.source ? media.source.replace(/_/g, ' ').toLowerCase() : '—'}
+          />
+        </dl>
 
-          {/* ------------------------------------------------------- main body */}
-          <div className="min-w-0 flex-1 pt-2 md:pt-32">
-            <div className="flex flex-wrap items-center gap-2">
-              {media.isAdult && (
-                <span className="chip border-red-500/40 bg-red-500/10 text-red-300">18+</span>
-              )}
-              {media.status === 'RELEASING' && (
-                <span className="chip border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
-                  Airing
-                </span>
-              )}
-              {nextEp && <AiringCountdown airingAt={nextEp.airingAt} episode={nextEp.episode} />}
-            </div>
-
-            <h1 className="mt-2 text-2xl font-black leading-tight tracking-tight text-white sm:text-4xl">
-              {title}
-            </h1>
-            {media.title.native && media.title.native !== title && (
-              <p className="mt-1 text-sm text-zinc-500">{media.title.native}</p>
+        {nextEp && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <AiringCountdown airingAt={nextEp.airingAt} episode={nextEp.episode} />
+            {media.isAdult && (
+              <span className="chip border-red-500/40 bg-red-500/10 text-red-300">18+</span>
             )}
+          </div>
+        )}
+
+        {/* ---------------------------------------------------- synopsis + meta */}
+        <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_360px]">
+          <div className="min-w-0 space-y-8">
+            <section>
+              <h2 className="section-title mb-3">{coverLabel('Synopsis', covered)}</h2>
+              <div className="max-w-3xl">
+                <Synopsis description={media.description} />
+              </div>
+            </section>
 
             {media.genres?.length ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {media.genres.map((g) => (
-                  <Link key={g} href={`/search?genre=${encodeURIComponent(g)}`} className="chip hover:bg-white/10">
-                    {g}
-                  </Link>
-                ))}
-              </div>
+              <section>
+                <h2 className="label">{coverLabel('Genres', covered)}</h2>
+                <div className="flex flex-wrap gap-1.5">
+                  {media.genres.map((g) => (
+                    <Link
+                      key={g}
+                      href={`/search?genre=${encodeURIComponent(g)}`}
+                      className="chip transition-colors hover:bg-white/10"
+                    >
+                      {g}
+                    </Link>
+                  ))}
+                </div>
+              </section>
             ) : null}
 
-            <div className="mt-5 max-w-3xl">
-              <Synopsis description={media.description} />
-            </div>
-
             {studios.length > 0 && (
-              <div className="mt-4">
-                <h3 className="label">Studios</h3>
+              <section>
+                <h2 className="label">Studios</h2>
                 <div className="flex flex-wrap gap-1.5">
                   {studios.map((s) => (
                     <Link
                       key={s.id}
                       href={`/search?studio=${encodeURIComponent(s.name)}`}
-                      className="chip hover:bg-white/10"
+                      className="chip transition-colors hover:bg-white/10"
                     >
                       {s.name}
                     </Link>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
 
             {media.tags?.length ? (
-              <div className="mt-4">
-                <h3 className="label">Tags</h3>
+              <section>
+                <h2 className="label">Tags</h2>
                 <div className="flex flex-wrap gap-1.5">
                   {media.tags
                     .filter((t) => !t.isMediaSpoiler)
-                    .slice(0, 14)
+                    .slice(0, 16)
                     .map((t) => (
                       <span key={t.id} className="chip">
                         {t.name}
-                        {t.rank ? <span className="text-zinc-500">{t.rank}%</span> : null}
+                        {t.rank ? <span className="text-zinc-600">{t.rank}%</span> : null}
                       </span>
                     ))}
                 </div>
-              </div>
+              </section>
             ) : null}
 
             {altTitles.length > 0 && (
-              <p className="mt-4 text-[11px] leading-relaxed text-zinc-500">
+              <p className="text-[11px] leading-relaxed text-zinc-600">
                 <span className="font-semibold uppercase tracking-wider">Also known as:</span>{' '}
                 {altTitles.join(' · ')}
               </p>
             )}
-          </div>
-        </div>
 
-        {/* --------------------------------------------------- episodes + side */}
-        <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_360px]">
-          <div className="space-y-6">
             <EpisodeSection
+              covered={covered}
               animeId={media.id}
               malId={media.idMal}
               title={title}
@@ -271,40 +229,37 @@ export default async function AnimeDetailPage({ params }: Params) {
               totalEpisodes={media.episodes}
               status={media.status}
             />
-
-            {relations.length > 0 && (
-              <section className="surface p-4 sm:p-5">
-                <h2 className="section-title mb-3">Related</h2>
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {relations.slice(0, 12).map((edge) => (
-                    <RelationCard key={`${edge.id}-${edge.node.id}`} edge={edge} />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {recommendations.length > 0 && (
-              <section>
-                <h2 className="section-title mb-3">You might also like</h2>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-4 xl:grid-cols-6">
-                  {recommendations.slice(0, 12).map((m) => (
-                    <PosterCard key={m.id} media={m} />
-                  ))}
-                </div>
-              </section>
-            )}
           </div>
 
-          <aside className="space-y-6">
-            <TrailerEmbed trailer={media.trailer} title={title} />
+          <aside className="space-y-5">
+            <TrailerEmbed trailer={media.trailer} title={title} covered={covered} />
+
+            {media.externalLinks?.length ? (
+              <section className="surface p-4">
+                <h2 className="mb-3 text-sm font-semibold text-zinc-100">Links</h2>
+                <div className="flex flex-wrap gap-1.5">
+                  {media.externalLinks.slice(0, 10).map((l) => (
+                    <a
+                      key={l.id}
+                      href={l.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="chip transition-colors hover:bg-white/10"
+                    >
+                      {l.site}
+                    </a>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             {staff.length > 0 && (
               <section className="surface p-4">
                 <h2 className="mb-3 text-sm font-semibold text-zinc-100">Staff</h2>
-                <ul className="space-y-2">
+                <ul className="space-y-2.5">
                   {staff.slice(0, 8).map((s) => (
                     <li key={`${s.node.id}-${s.role}`} className="flex items-center gap-2.5">
-                      <span className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-ink-700">
+                      <span className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-base-700">
                         {s.node.image?.large ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -319,7 +274,7 @@ export default async function AnimeDetailPage({ params }: Params) {
                         <span className="block truncate text-[13px] text-zinc-100">
                           {s.node.name.full}
                         </span>
-                        <span className="block truncate text-[11px] text-zinc-500">
+                        <span className="block truncate font-mono text-[0.6rem] uppercase tracking-wide text-zinc-600">
                           {s.role ?? '—'}
                         </span>
                       </span>
@@ -335,7 +290,7 @@ export default async function AnimeDetailPage({ params }: Params) {
                 <ul className="grid grid-cols-2 gap-3">
                   {media.characters.edges.slice(0, 8).map((c) => (
                     <li key={c.id} className="flex items-center gap-2">
-                      <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-ink-700">
+                      <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-base-700">
                         {c.node.image?.large ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -350,7 +305,7 @@ export default async function AnimeDetailPage({ params }: Params) {
                         <span className="block truncate text-[12px] text-zinc-100">
                           {c.node.name.full}
                         </span>
-                        <span className="block truncate text-[10px] uppercase tracking-wide text-zinc-500">
+                        <span className="block truncate font-mono text-[0.6rem] uppercase tracking-wide text-zinc-600">
                           {c.role?.toLowerCase()}
                         </span>
                       </span>
@@ -361,6 +316,29 @@ export default async function AnimeDetailPage({ params }: Params) {
             ) : null}
           </aside>
         </div>
+
+        {/* --------------------------------------------------------- relations */}
+        {relations.length > 0 && (
+          <section className="mt-10">
+            <h2 className="section-title mb-3">Related</h2>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {relations.slice(0, 12).map((edge) => (
+                <RelationCard key={`${edge.id}-${edge.node.id}`} edge={edge} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {recommendations.length > 0 && (
+          <section className="mt-10">
+            <h2 className="section-title mb-3">You might also like</h2>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {recommendations.slice(0, 12).map((m) => (
+                <PosterCard key={m.id} media={m} />
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   )

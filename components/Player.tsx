@@ -1,15 +1,30 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Hls from 'hls.js'
-import { formatTime, usePrefs, useProgress } from '@/lib/store'
+import {
+  IconCheck,
+  IconFullscreen,
+  IconFullscreenExit,
+  IconPause,
+  IconPip,
+  IconPlay,
+  IconRefresh,
+  IconSettings,
+  IconSkipBack,
+  IconSkipForward,
+  IconSpinner,
+  IconTheater,
+  IconVolume,
+  IconVolumeMute,
+} from './icons'
+import { usePrefs, useProgress, formatTime } from '@/lib/store'
 
 export interface PlayerSource {
   url: string
   quality: string
-  isM3U8: boolean
+  isM3U8?: boolean
 }
 
 export interface PlayerSubtitle {
@@ -20,7 +35,7 @@ export interface PlayerSubtitle {
 }
 
 export interface PlayerPayload {
-  provider: string
+  provider?: string
   sources: PlayerSource[]
   subtitles: PlayerSubtitle[]
   intro?: { start: number; end: number } | null
@@ -38,6 +53,60 @@ interface Props {
   loading: boolean
   error: string | null
   onRetry?: () => void
+  /** Theater mode widens the player and hides the side column. */
+  theater?: boolean
+  onTheaterChange?: (next: boolean) => void
+}
+
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
+
+/** How long the "next episode" countdown runs before navigating. */
+const AUTO_NEXT_SECONDS = 8
+
+/**
+ * Playback preferences that belong to the player rather than to one episode.
+ * Position is tracked separately (lib/store progress); these are the controls a
+ * viewer expects to survive a refresh: volume, mute, speed, chosen quality and
+ * chosen subtitle language.
+ */
+const PS_KEY = 'anistream:player:state:v1'
+
+interface PersistedPlayer {
+  volume: number
+  muted: boolean
+  rate: number
+  /** Level label like "1080p"; null means auto. */
+  quality: string | null
+  /** Subtitle language tag, e.g. "en"; null means auto. */
+  subtitleLang: string | null
+}
+
+const DEFAULT_PS: PersistedPlayer = {
+  volume: 1,
+  muted: false,
+  rate: 1,
+  quality: null,
+  subtitleLang: null,
+}
+
+function readPS(): PersistedPlayer {
+  if (typeof window === 'undefined') return DEFAULT_PS
+  try {
+    const raw = window.localStorage.getItem(PS_KEY)
+    if (!raw) return DEFAULT_PS
+    return { ...DEFAULT_PS, ...(JSON.parse(raw) as Partial<PersistedPlayer>) }
+  } catch {
+    return DEFAULT_PS
+  }
+}
+
+function writePS(patch: Partial<PersistedPlayer>): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(PS_KEY, JSON.stringify({ ...readPS(), ...patch }))
+  } catch {
+    /* quota or private mode: ignore */
+  }
 }
 
 export default function Player({
@@ -51,11 +120,14 @@ export default function Player({
   loading,
   error,
   onRetry,
+  theater = false,
+  onTheaterChange,
 }: Props) {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const shellRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { save, get } = useProgress()
   const { prefs, update } = usePrefs()
 
@@ -64,6 +136,20 @@ export default function Player({
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
   const [volume, setVolume] = useState(1)
+  /*
+   * The <video> element is replaced by the loading/error branch, so a plain
+   * ref can be null on the render where the listener effect first runs and
+   * never re-runs (its deps do not include the element). Holding the node in
+   * state makes the effect re-attach whenever the element actually mounts.
+   */
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
+
+  // Stable identity: an inline arrow would be re-attached on every render,
+  // which detaches the element (null) and re-attaches it in a loop.
+  const attachVideo = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node
+    setVideoEl(node)
+  }, [])
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [buffered, setBuffered] = useState(0)
@@ -72,7 +158,14 @@ export default function Player({
   const [fullscreen, setFullscreen] = useState(false)
   const [resumed, setResumed] = useState(false)
   const [rate, setRate] = useState(1)
-  const [skipToast, setSkipToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [uiVisible, setUiVisible] = useState(true)
+  const [waiting, setWaiting] = useState(false)
+  const [inPip, setInPip] = useState(false)
+  /** Seconds until the next episode starts; null when not counting down. */
+  const [nextIn, setNextIn] = useState<number | null>(null)
+  const autoNextTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const saved = useMemo(() => get(animeId, type), [get, animeId, type])
 
@@ -83,19 +176,66 @@ export default function Player({
 
   const activeSource = useMemo(() => {
     if (!payload?.sources?.length) return null
-    // Prefer an explicit high/1080p rendition, otherwise the first entry.
-    const byQuality = [...payload.sources].sort((a, b) => {
-      const rank = (q: string) =>
-        /2160|4k/i.test(q) ? 4 : /1080/i.test(q) ? 3 : /720/i.test(q) ? 2 : /480/i.test(q) ? 1 : 0
-      return rank(b.quality) - rank(a.quality)
-    })
-    return byQuality[0]
+    const rank = (q: string) =>
+      /2160|4k/i.test(q) ? 4 : /1080/i.test(q) ? 3 : /720/i.test(q) ? 2 : /480/i.test(q) ? 1 : 0
+    return [...payload.sources].sort((a, b) => rank(b.quality) - rank(a.quality))[0]
   }, [payload])
+
+  const flash = useCallback((msg: string, ms = 1600) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), ms)
+  }, [])
+
+  /*
+   * Restore volume/mute/speed. Deliberately an effect rather than a lazy
+   * useState initialiser: reading localStorage during render would make the
+   * server and client disagree and trip hydration.
+   */
+  useEffect(() => {
+    const v = videoEl
+    if (!v) return
+    const ps = readPS()
+    v.volume = ps.volume
+    v.muted = ps.muted
+    v.playbackRate = ps.rate
+    setVolume(ps.volume)
+    setMuted(ps.muted)
+    setRate(ps.rate)
+  }, [videoEl])
+
+  /* --------------------------------------------------- auto-next countdown */
+
+  const cancelAutoNext = useCallback(() => {
+    if (autoNextTimer.current) clearInterval(autoNextTimer.current)
+    autoNextTimer.current = null
+    setNextIn(null)
+  }, [])
+
+  const startAutoNext = useCallback(() => {
+    if (!nextHref) return
+    cancelAutoNext()
+    setNextIn(AUTO_NEXT_SECONDS)
+  }, [nextHref, cancelAutoNext])
+
+  // Drive the countdown; navigation happens in the effect so the interval never
+  // performs a side effect from inside a state updater.
+  useEffect(() => {
+    if (nextIn === null) return
+    if (nextIn <= 0) {
+      setNextIn(null)
+      if (nextHref) router.push(nextHref)
+      return
+    }
+    const t = setTimeout(() => setNextIn((n) => (n === null ? null : n - 1)), 1000)
+    return () => clearTimeout(t)
+  }, [nextIn, nextHref, router])
+
+  useEffect(() => cancelAutoNext, [cancelAutoNext])
 
   /* ------------------------------------------------------------- playback */
 
   useEffect(() => {
-    const video = videoRef.current
+    const video = videoEl
     if (!video || !activeSource) return
 
     setLevels([])
@@ -108,6 +248,15 @@ export default function Player({
     }
 
     const src = activeSource.url
+
+    // A progressive file (the public-domain film source) must be handed to the
+    // element directly. Feeding it to hls.js fails, because there is no
+    // manifest to parse. `isM3U8 === false` is explicit; undefined keeps the
+    // anime path, where every source is HLS.
+    if (activeSource.isM3U8 === false) {
+      video.src = src
+      return
+    }
 
     // Native HLS (Safari/iOS) takes the URL directly.
     if (video.canPlayType('application/vnd.apple.mpegurl') && !Hls.isSupported()) {
@@ -140,6 +289,11 @@ export default function Player({
         label: l.height ? `${l.height}p` : `${Math.round((l.bitrate ?? 0) / 1000)}kbps`,
       }))
       setLevels(lvls)
+
+      // Honour a previously chosen quality if it is still offered.
+      const want = readPS().quality
+      const match = want ? lvls.find((l) => l.label === want) : null
+      if (match) hls.currentLevel = match.index
       setCurrentLevel(hls.currentLevel)
     })
 
@@ -168,37 +322,36 @@ export default function Player({
       hls.destroy()
       hlsRef.current = null
     }
-  }, [activeSource])
+  }, [activeSource, videoEl])
 
   // Resume from the stored position once metadata is known.
   useEffect(() => {
-    const video = videoRef.current
+    const video = videoEl
     if (!video || resumed || !saved || saved.episode !== episode) return
     const onMeta = () => {
       if (saved.position > 5 && saved.position < (video.duration || Infinity) - 10) {
         video.currentTime = saved.position
-        setSkipToast(`Resumed from ${formatTime(saved.position)}`)
-        setTimeout(() => setSkipToast(null), 2600)
+        flash(`Resumed from ${formatTime(saved.position)}`, 2600)
       }
       setResumed(true)
     }
     video.addEventListener('loadedmetadata', onMeta, { once: true })
     return () => video.removeEventListener('loadedmetadata', onMeta)
-  }, [saved, episode, resumed])
+  }, [videoEl, saved, episode, resumed, flash])
 
-  // Autoplay once the manifest is ready and the user allows it.
+  // Autoplay once the manifest is ready, unless the user disabled it.
   useEffect(() => {
-    const video = videoRef.current
+    const video = videoEl
     if (!video || !activeSource) return
     const tryPlay = () => {
       if (!prefs.autoPlay) return
       video.play().catch(() => {
-        /* autoplay blocked; user will press play */
+        /* autoplay blocked; the centre play button remains */
       })
     }
     video.addEventListener('canplay', tryPlay, { once: true })
     return () => video.removeEventListener('canplay', tryPlay)
-  }, [activeSource, prefs.autoPlay])
+  }, [videoEl, activeSource, prefs.autoPlay])
 
   /* -------------------------------------------------------- progress save */
 
@@ -221,7 +374,7 @@ export default function Player({
   )
 
   useEffect(() => {
-    const video = videoRef.current
+    const video = videoEl
     if (!video) return
 
     const onTime = () => {
@@ -239,15 +392,16 @@ export default function Player({
     const onEnded = () => {
       setPlaying(false)
       persist(video.duration, video.duration, true)
-      if (prefs.autoNext && nextHref) {
-        setSkipToast('Up next…')
-        setTimeout(() => router.push(nextHref), 1200)
-      }
+      // Count down visibly so a viewer can cancel; navigating straight away
+      // gave them no chance to stop it.
+      if (prefs.autoNext && nextHref) startAutoNext()
     }
     const onVolume = () => {
       setVolume(video.volume)
       setMuted(video.muted)
     }
+    const onWaiting = () => setWaiting(true)
+    const onPlaying = () => setWaiting(false)
 
     video.addEventListener('timeupdate', onTime)
     video.addEventListener('durationchange', onDur)
@@ -255,6 +409,8 @@ export default function Player({
     video.addEventListener('pause', onPause)
     video.addEventListener('ended', onEnded)
     video.addEventListener('volumechange', onVolume)
+    video.addEventListener('waiting', onWaiting)
+    video.addEventListener('playing', onPlaying)
 
     return () => {
       video.removeEventListener('timeupdate', onTime)
@@ -263,8 +419,10 @@ export default function Player({
       video.removeEventListener('pause', onPause)
       video.removeEventListener('ended', onEnded)
       video.removeEventListener('volumechange', onVolume)
+      video.removeEventListener('waiting', onWaiting)
+      video.removeEventListener('playing', onPlaying)
     }
-  }, [persist, prefs.autoNext, nextHref, router])
+  }, [videoEl, persist, prefs.autoNext, nextHref, startAutoNext])
 
   // Periodic checkpoint so a tab close does not lose more than ~5s.
   useEffect(() => {
@@ -299,27 +457,61 @@ export default function Player({
     return () => document.removeEventListener('fullscreenchange', onFs)
   }, [])
 
-  const togglePlay = () => {
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const onEnter = () => setInPip(true)
+    const onLeave = () => setInPip(false)
+    v.addEventListener('enterpictureinpicture', onEnter)
+    v.addEventListener('leavepictureinpicture', onLeave)
+    return () => {
+      v.removeEventListener('enterpictureinpicture', onEnter)
+      v.removeEventListener('leavepictureinpicture', onLeave)
+    }
+  }, [])
+
+  // Auto-skip the intro when the preference is on and a marker exists.
+  useEffect(() => {
+    if (!prefs.skipIntro) return
+    const intro = payload?.intro
+    if (!intro) return
+    if (time >= intro.start && time < intro.end - 1) {
+      const v = videoRef.current
+      if (v) {
+        v.currentTime = intro.end
+        flash('Skipped intro')
+      }
+    }
+    // Only re-evaluate as time advances; the marker objects are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [time, prefs.skipIntro, payload?.intro])
+
+  const togglePlay = useCallback(() => {
     const v = videoRef.current
     if (!v) return
     if (v.paused) v.play().catch(() => {})
     else v.pause()
-  }
+  }, [])
 
-  const seekTo = (t: number) => {
+  const seekTo = useCallback((t: number) => {
     const v = videoRef.current
     if (!v) return
     v.currentTime = Math.max(0, Math.min(t, v.duration || t))
     setTime(v.currentTime)
-  }
+  }, [])
 
-  const skipBy = (delta: number) => seekTo((videoRef.current?.currentTime ?? 0) + delta)
+  const skipBy = useCallback((delta: number) => {
+    const v = videoRef.current
+    if (!v) return
+    seekTo(v.currentTime + delta)
+  }, [seekTo])
 
   const toggleMute = () => {
     const v = videoRef.current
     if (!v) return
     v.muted = !v.muted
     setMuted(v.muted)
+    writePS({ muted: v.muted })
   }
 
   const changeVolume = (val: number) => {
@@ -329,7 +521,10 @@ export default function Player({
     v.muted = val === 0
     setVolume(val)
     setMuted(val === 0)
+    writePS({ volume: val, muted: val === 0 })
   }
+
+  const toggleTheater = () => onTheaterChange?.(!theater)
 
   const toggleFullscreen = () => {
     const el = shellRef.current
@@ -338,159 +533,219 @@ export default function Player({
     else el.requestFullscreen().catch(() => {})
   }
 
+  const togglePip = async () => {
+    const v = videoRef.current
+    if (!v) return
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture()
+      else await v.requestPictureInPicture()
+    } catch {
+      flash('Picture-in-picture unavailable')
+    }
+  }
+
   const changeRate = (r: number) => {
     const v = videoRef.current
     if (!v) return
     v.playbackRate = r
     setRate(r)
+    writePS({ rate: r })
   }
 
-  const applySubtitle = (idx: number) => {
-    const v = videoRef.current
-    if (!v) return
-    setSubtitleIdx(idx)
-    const tracks = v.textTracks
-    for (let i = 0; i < tracks.length; i++) {
-      tracks[i].mode = i === idx && showSubs ? 'showing' : 'disabled'
-    }
+  const selectLevel = (i: number) => {
+    if (hlsRef.current) hlsRef.current.currentLevel = i
+    setCurrentLevel(i)
+    const lvl = levels.find((l) => l.index === i)
+    if (lvl) writePS({ quality: lvl.label })
   }
-
-  useEffect(() => {
-    const v = videoRef.current
-    if (!v) return
-    const tracks = v.textTracks
-    for (let i = 0; i < tracks.length; i++) {
-      tracks[i].mode = i === subtitleIdx && showSubs ? 'showing' : 'disabled'
-    }
-  }, [subtitleIdx, showSubs, payload])
 
   const skipIntro = () => {
-    if (payload?.intro?.end) seekTo(payload.intro.end)
-    else skipBy(85)
+    if (payload?.intro?.end) {
+      seekTo(payload.intro.end)
+      flash('Skipped intro')
+    }
   }
 
   const skipOutro = () => {
-    if (payload?.outro?.start) seekTo(payload.outro.start)
-    else seekTo((duration || 0) - 5)
+    if (payload?.outro?.end) {
+      seekTo(payload.outro.end)
+      flash('Skipped outro')
+    }
   }
 
-  // Keyboard shortcuts, disabled while typing in a field.
+  // Apply the subtitle preference when a new track list arrives.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const tracks = v.textTracks
+    if (!tracks?.length) return
+    // Restore the saved language, matched by tag rather than index: a different
+    // provider returns its tracks in a different order.
+    const wantLang = readPS().subtitleLang
+    let idx = subtitleIdx
+    if (idx < 0 && wantLang && payload?.subtitles) {
+      const found = payload.subtitles.findIndex((s) => s.lang === wantLang)
+      if (found >= 0) {
+        idx = found
+        setSubtitleIdx(found)
+      }
+    }
+
+    const on = prefs.subtitlesOn && showSubs
+    for (let i = 0; i < tracks.length; i++) {
+      tracks[i].mode = on && i === (idx < 0 ? 0 : idx) ? 'showing' : 'disabled'
+    }
+    if (on && idx < 0) setSubtitleIdx(0)
+  }, [payload, prefs.subtitlesOn, showSubs, subtitleIdx])
+
+  // Show intro/outro skip prompts based on the current position.
+  const introActive =
+    !!payload?.intro && time >= payload.intro.start && time < payload.intro.end - 0.5
+  const outroActive =
+    !!payload?.outro && time >= payload.outro.start && time < payload.outro.end - 0.5
+
+  /* ----------------------------------------------------------- ui chrome */
+
+  const wake = useCallback(() => {
+    setUiVisible(true)
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    hideTimer.current = setTimeout(() => setUiVisible(false), 2800)
+  }, [])
+
+  useEffect(() => {
+    wake()
+    return () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current)
+    }
+  }, [wake])
+
+  // Keyboard shortcuts, scoped to the player shell.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      switch (e.key) {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+
+      switch (e.key.toLowerCase()) {
         case ' ':
         case 'k':
           e.preventDefault()
           togglePlay()
+          wake()
           break
-        case 'ArrowRight':
+        case 'arrowright':
           e.preventDefault()
           skipBy(5)
+          flash('+5s', 700)
+          wake()
           break
-        case 'ArrowLeft':
+        case 'arrowleft':
           e.preventDefault()
           skipBy(-5)
+          flash('−5s', 700)
+          wake()
           break
-        case 'j':
-          skipBy(-10)
+        case 'arrowup':
+          e.preventDefault()
+          changeVolume(Math.min(1, (videoRef.current?.volume ?? 1) + 0.05))
+          wake()
           break
-        case 'l':
-          skipBy(10)
-          break
-        case 'm':
-          toggleMute()
+        case 'arrowdown':
+          e.preventDefault()
+          changeVolume(Math.max(0, (videoRef.current?.volume ?? 1) - 0.05))
+          wake()
           break
         case 'f':
+          e.preventDefault()
           toggleFullscreen()
+          break
+        case 'm':
+          e.preventDefault()
+          toggleMute()
+          wake()
+          break
+        case 'p':
+          e.preventDefault()
+          void togglePip()
+          break
+        case 't':
+          e.preventDefault()
+          toggleTheater()
           break
         case 'n':
           if (nextHref) router.push(nextHref)
           break
-        case 'p':
-          if (prevHref) router.push(prevHref)
+        default:
           break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextHref, prevHref, duration, showSubs, subtitleIdx, muted])
+  }, [togglePlay, skipBy, wake, nextHref, router])
 
   const pct = duration ? (time / duration) * 100 : 0
 
-  /* --------------------------------------------------------------- render */
+  /* ------------------------------------------------------------- render */
 
   if (loading) {
     return (
-      <div className="aspect-video w-full animate-pulse rounded-xl bg-ink-800">
-        <div className="grid h-full place-items-center text-sm text-zinc-400">
-          <span className="flex items-center gap-2">
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity=".25" />
-              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" />
-            </svg>
-            Resolving stream…
-          </span>
+      <div className="mx-auto grid aspect-video w-full max-w-[min(100%,calc(100dvh-16rem))] place-items-center rounded-[var(--radius-xl)] border border-white/[0.06] bg-white/[0.02] lg:max-w-[min(100%,calc((100dvh-7.9rem)*1.7778))]">
+        <div className="flex flex-col items-center gap-3">
+          <IconSpinner size={28} className="animate-spin text-accent" />
+          <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-zinc-500">
+            Resolving stream
+          </p>
         </div>
       </div>
     )
   }
 
-  if (error) {
+  if (error || !activeSource) {
     return (
-      <div className="aspect-video w-full overflow-hidden rounded-xl border border-red-500/20 bg-ink-850">
-        <div className="grid h-full place-items-center p-6 text-center">
-          <div className="max-w-md">
-            <p className="text-sm font-semibold text-red-300">Could not resolve this stream</p>
-            <p className="mt-2 break-words text-xs leading-relaxed text-zinc-400">{error}</p>
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-              <button type="button" onClick={onRetry} className="btn-primary">
-                Try again
-              </button>
-              {hasPrev && (
-                <Link href={prevHref!} className="btn-ghost">
-                  Previous episode
-                </Link>
-              )}
-              {hasNext && (
-                <Link href={nextHref!} className="btn-ghost">
-                  Next episode
-                </Link>
-              )}
-            </div>
-            <p className="mt-3 text-[11px] text-zinc-500">
-              Providers rotate their players often. Retrying usually picks a different server.
-            </p>
-          </div>
+      <div className="mx-auto grid aspect-video w-full max-w-[min(100%,calc(100dvh-16rem))] place-items-center rounded-[var(--radius-xl)] border border-white/[0.06] bg-white/[0.02] p-6 lg:max-w-[min(100%,calc((100dvh-7.9rem)*1.7778))]">
+        <div className="flex max-w-md flex-col items-center gap-3 text-center">
+          <p className="text-sm text-zinc-300">{error ?? 'No playable source was returned.'}</p>
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="btn-primary">
+              <IconRefresh size={16} />
+              Try again
+            </button>
+          )}
         </div>
       </div>
     )
   }
 
-  if (!payload || !activeSource) {
-    return (
-      <div className="aspect-video w-full rounded-xl border border-white/5 bg-ink-850">
-        <div className="grid h-full place-items-center text-sm text-zinc-400">
-          No sources returned for this episode.
-        </div>
-      </div>
-    )
-  }
+  const VolumeIcon = muted || volume === 0 ? IconVolumeMute : IconVolume
 
   return (
-    <div ref={shellRef} className="group relative overflow-hidden rounded-xl bg-black">
+    <div
+      ref={shellRef}
+      onMouseMove={wake}
+      onMouseLeave={() => playing && setUiVisible(false)}
+      /*
+       * The player must never be taller than the space it has. Previously the
+       * shell was a bare `aspect-video` box, so on a short window it overflowed
+       * and pushed the controls off screen, which is what made going fullscreen
+       * feel mandatory. A width cap derived from the viewport height keeps the
+       * whole 16:9 frame visible and centred at any window size.
+       */
+      className={[
+        'group/shell relative mx-auto overflow-hidden rounded-[var(--radius-xl)] border border-white/[0.06] bg-black',
+        theater
+          ? 'w-full max-w-[min(100%,calc((100vh-9rem)*1.7778))]'
+          : 'w-full max-w-[min(100%,calc(100dvh-16rem))] lg:max-w-[min(100%,calc((100dvh-7.9rem)*1.7778))]',
+        uiVisible ? '' : 'cursor-none',
+      ].join(' ')}
+    >
       <video
-        ref={videoRef}
+        ref={attachVideo}
         poster={poster || undefined}
         playsInline
         controls={false}
         className="aspect-video w-full bg-black"
-        onClick={togglePlay}
-        crossOrigin="anonymous"
       >
-        {payload.subtitles.map((s, i) => (
+        {payload?.subtitles.map((s, i) => (
           <track
             key={`${s.url}-${i}`}
             kind="subtitles"
@@ -502,84 +757,188 @@ export default function Player({
         ))}
       </video>
 
-      {skipToast && (
-        <div className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full bg-black/80 px-4 py-1.5 text-xs font-medium text-white backdrop-blur">
-          {skipToast}
+      {/* Buffering indicator */}
+      {waiting && !error && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <IconSpinner size={36} className="animate-spin text-white/80" />
         </div>
       )}
 
-      {/* centre play affordance */}
+      {/* Up-next countdown. Cancellable, and it keeps the controls reachable so
+          a viewer can also jump immediately. */}
+      {nextIn !== null && nextHref && (
+        <div className="absolute bottom-20 right-4 z-30 w-64 overflow-hidden rounded-xl border border-white/12 bg-black/90 p-3 shadow-2xl animate-fade-in">
+          <p className="font-mono text-[0.6rem] uppercase tracking-[0.16em] text-zinc-400">
+            Up next in {nextIn}s
+          </p>
+          <p className="mt-1 line-clamp-1 text-sm font-semibold text-white">
+            Episode {episode + 1}
+          </p>
+          <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-white/15">
+            <div
+              className="h-full origin-left rounded-full bg-accent transition-transform duration-1000 ease-linear"
+              style={{ transform: `scaleX(${(AUTO_NEXT_SECONDS - nextIn) / AUTO_NEXT_SECONDS})` }}
+            />
+          </div>
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={cancelAutoNext}
+              className="flex-1 rounded-md border border-white/12 px-2 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/[0.07] hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => nextHref && router.push(nextHref)}
+              className="flex-1 rounded-md bg-accent px-2 py-1.5 text-[11px] font-semibold text-black transition hover:brightness-110"
+            >
+              Play now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Toast (resume / skip feedback) */}
+      {toast && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-white/10 bg-black/90 px-3.5 py-1.5 text-xs font-medium text-white animate-fade-in">
+          {toast}
+        </div>
+      )}
+
+      {/*
+        Click surface. Sits above the video but *below* the control bar so
+        control-bar clicks never reach it — the previous layout nested the
+        controls inside the toggle target, so pressing pause also toggled
+        playback back on.
+      */}
+      <button
+        type="button"
+        aria-label={playing ? 'Pause' : 'Play'}
+        onClick={() => {
+          togglePlay()
+          wake()
+        }}
+        className="absolute inset-0 z-10 cursor-pointer focus:outline-none"
+      />
+
+      {/* Centre play affordance when paused */}
       {!playing && (
+        <span className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+          <span className="grid h-16 w-16 place-items-center rounded-full bg-accent text-black shadow-2xl animate-scale-in">
+            <IconPlay size={24} />
+          </span>
+        </span>
+      )}
+
+      {/* Skip intro / outro prompts */}
+      {introActive && (
         <button
           type="button"
-          onClick={togglePlay}
-          aria-label="Play"
-          className="absolute inset-0 grid place-items-center bg-black/25 transition hover:bg-black/35"
+          onClick={skipIntro}
+          className="absolute bottom-24 right-4 z-30 rounded-lg border border-white/15 bg-black/85 px-4 py-2 text-sm font-medium text-white transition hover:bg-black animate-fade-up"
         >
-          <span className="grid h-16 w-16 place-items-center rounded-full bg-brand/95 text-white shadow-2xl">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-          </span>
+          Skip intro
+        </button>
+      )}
+      {outroActive && (
+        <button
+          type="button"
+          onClick={skipOutro}
+          className="absolute bottom-24 right-4 z-30 rounded-lg border border-white/15 bg-black/85 px-4 py-2 text-sm font-medium text-white transition hover:bg-black animate-fade-up"
+        >
+          Skip outro
         </button>
       )}
 
-      {/* controls */}
-      <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
-        <div className="mb-2 flex items-center gap-3">
-          <span className="w-12 shrink-0 text-right text-[11px] tabular-nums text-zinc-300">
+      {/* Controls */}
+      <div
+        className={[
+          'absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-3 pb-3 pt-12 transition-opacity duration-200',
+          uiVisible || !playing ? 'opacity-100' : 'pointer-events-none opacity-0',
+        ].join(' ')}
+      >
+        {/* Seek bar */}
+        <div className="mb-2.5 flex items-center gap-3">
+          <span className="w-14 shrink-0 text-right font-mono text-[0.7rem] tabular-nums text-zinc-300">
             {formatTime(time)}
           </span>
           <div
-            className="group/seek relative h-1.5 flex-1 cursor-pointer rounded-full bg-white/20"
+            role="slider"
+            tabIndex={0}
+            aria-label="Seek"
+            aria-valuemin={0}
+            aria-valuemax={Math.floor(duration)}
+            aria-valuenow={Math.floor(time)}
+            className="group/seek relative h-4 flex-1 cursor-pointer"
             onClick={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
               seekTo(((e.clientX - rect.left) / rect.width) * (duration || 0))
             }}
           >
-            <div className="absolute inset-y-0 left-0 rounded-full bg-white/25" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
-            <div className="absolute inset-y-0 left-0 rounded-full bg-brand" style={{ width: `${pct}%` }} />
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/20">
+              <div
+                className="h-full origin-left bg-white/30"
+                style={{ transform: `scaleX(${duration ? buffered / duration : 0})` }}
+              />
+            </div>
             <div
-              className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white opacity-0 transition group-hover/seek:opacity-100"
-              style={{ left: `calc(${pct}% - 6px)` }}
+              className="absolute inset-x-0 top-1/2 h-1 origin-left -translate-y-1/2 rounded-full bg-accent"
+              style={{ transform: `scaleX(${duration ? time / duration : 0})` }}
+            />
+            <div
+              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 transition group-hover/seek:opacity-100"
+              style={{ left: `${pct}%` }}
             />
           </div>
-          <span className="w-12 shrink-0 text-[11px] tabular-nums text-zinc-400">
+          <span className="w-14 shrink-0 font-mono text-[0.7rem] tabular-nums text-zinc-400">
             {formatTime(duration)}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={togglePlay} className="btn-subtle px-2" aria-label="Play/pause">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              togglePlay()
+              wake()
+            }}
+            className="btn-icon h-9 w-9"
+            aria-label={playing ? 'Pause' : 'Play'}
+          >
             {playing ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M7 5h4v14H7zM13 5h4v14h-4z" />
-              </svg>
+              <IconPause size={18} />
             ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
+              <IconPlay size={18} />
             )}
           </button>
 
-          <button type="button" onClick={() => skipBy(-10)} className="btn-subtle px-2 text-xs" aria-label="Back 10 seconds">
-            −10s
+          <button
+            type="button"
+            onClick={() => {
+              skipBy(-10)
+              wake()
+            }}
+            className="btn-icon h-9 w-9"
+            aria-label="Back 10 seconds"
+          >
+            <IconSkipBack size={18} />
           </button>
-          <button type="button" onClick={() => skipBy(10)} className="btn-subtle px-2 text-xs" aria-label="Forward 10 seconds">
-            +10s
+          <button
+            type="button"
+            onClick={() => {
+              skipBy(10)
+              wake()
+            }}
+            className="btn-icon h-9 w-9"
+            aria-label="Forward 10 seconds"
+          >
+            <IconSkipForward size={18} />
           </button>
 
-          <div className="flex items-center gap-1.5">
-            <button type="button" onClick={toggleMute} className="btn-subtle px-2" aria-label="Mute">
-              {muted || volume === 0 ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M4 9v6h4l5 4V5L8 9H4zM17 9l4 6M21 9l-4 6" stroke="currentColor" strokeWidth="2" fill="none" />
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M4 9v6h4l5 4V5L8 9H4z" />
-                </svg>
-              )}
+          <div className="group/vol flex items-center">
+            <button type="button" onClick={toggleMute} className="btn-icon h-9 w-9" aria-label="Mute">
+              <VolumeIcon size={18} />
             </button>
             <input
               type="range"
@@ -588,136 +947,231 @@ export default function Player({
               step={0.05}
               value={muted ? 0 : volume}
               onChange={(e) => changeVolume(Number(e.target.value))}
-              className="h-1 w-20 accent-brand"
+              className="h-1 w-0 opacity-0 transition-all group-hover/vol:w-20 group-hover/vol:opacity-100 focus:w-20 focus:opacity-100"
               aria-label="Volume"
             />
           </div>
 
-          {(payload.intro || payload.outro) && (
-            <div className="flex items-center gap-1">
-              <button type="button" onClick={skipIntro} className="btn-subtle px-2 text-xs">
-                Skip intro
-              </button>
-              <button type="button" onClick={skipOutro} className="btn-subtle px-2 text-xs">
-                Skip outro
-              </button>
-            </div>
-          )}
-
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <select
-              value={rate}
-              onChange={(e) => changeRate(Number(e.target.value))}
-              className="rounded-md border border-white/10 bg-black/60 px-2 py-1 text-[11px] text-zinc-200"
-              aria-label="Playback speed"
-            >
-              {[0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => (
-                <option key={r} value={r}>
-                  {r}×
-                </option>
-              ))}
-            </select>
-
-            {levels.length > 1 && (
+          <div className="ml-auto flex items-center gap-1.5">
+            {/* Subtitle track picker */}
+            {payload?.subtitles?.length ? (
               <select
-                value={currentLevel}
+                value={subtitleIdx}
                 onChange={(e) => {
-                  const idx = Number(e.target.value)
-                  if (hlsRef.current) hlsRef.current.currentLevel = idx
-                  setCurrentLevel(idx)
+                  const i = Number(e.target.value)
+                  setSubtitleIdx(i)
+                  writePS({ subtitleLang: i < 0 ? null : payload?.subtitles[i]?.lang ?? null })
                 }}
-                className="rounded-md border border-white/10 bg-black/60 px-2 py-1 text-[11px] text-zinc-200"
-                aria-label="Quality"
+                className="h-8 max-w-[9rem] rounded-lg border border-white/10 bg-black/85 px-2 text-xs text-zinc-200 focus:outline-none"
+                aria-label="Subtitles"
               >
-                <option value={-1}>Auto</option>
-                {levels.map((l) => (
-                  <option key={l.index} value={l.index}>
-                    {l.label}
+                <option value={-1}>Subtitles off</option>
+                {payload.subtitles.map((s, i) => (
+                  <option key={`${s.url}-${i}`} value={i}>
+                    {s.label || s.lang}
                   </option>
                 ))}
               </select>
-            )}
+            ) : null}
 
-            {payload.subtitles.length > 0 && (
-              <div className="flex items-center gap-1">
-                <select
-                  value={subtitleIdx}
-                  onChange={(e) => applySubtitle(Number(e.target.value))}
-                  className="max-w-[150px] rounded-md border border-white/10 bg-black/60 px-2 py-1 text-[11px] text-zinc-200"
-                  aria-label="Subtitles"
-                >
-                  <option value={-1}>Subtitles off</option>
-                  {payload.subtitles.map((s, i) => (
-                    <option key={`${s.label}-${i}`} value={i}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setShowSubs((v) => !v)}
-                  className={['btn-subtle px-2 text-[11px]', showSubs ? 'text-brand-soft' : ''].join(' ')}
-                  title="Toggle subtitle rendering"
-                >
-                  CC
-                </button>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              className="btn-icon h-9 w-9"
+              aria-label="Playback settings"
+            >
+              <IconSettings size={18} />
+            </button>
 
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                disabled={!hasPrev}
-                onClick={() => prevHref && router.push(prevHref)}
-                className="btn-subtle px-2 text-xs disabled:opacity-40"
-                title="Previous episode (p)"
-              >
-                Prev
-              </button>
-              <button
-                type="button"
-                disabled={!hasNext}
-                onClick={() => nextHref && router.push(nextHref)}
-                className="btn-subtle px-2 text-xs disabled:opacity-40"
-                title="Next episode (n)"
-              >
-                Next
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={togglePip}
+              className="btn-icon hidden h-9 w-9 sm:grid"
+              aria-label="Picture in picture"
+            >
+              <IconPip size={18} />
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleTheater}
+              className={['btn-icon hidden h-9 w-9 sm:grid', theater ? 'text-accent-soft' : ''].join(' ')}
+              aria-label={theater ? 'Exit theater mode' : 'Theater mode'}
+              aria-pressed={theater}
+            >
+              <IconTheater size={18} />
+            </button>
 
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="btn-subtle px-2"
-              aria-label="Fullscreen"
+              className="btn-icon h-9 w-9"
+              aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                {fullscreen ? (
-                  <path d="M9 3H5v4M15 3h4v4M15 21h4v-4M9 21H5v-4" />
-                ) : (
-                  <path d="M4 9V4h5M20 9V4h-5M20 15v5h-5M4 15v5h5" />
-                )}
-              </svg>
+              {fullscreen ? (
+                <IconFullscreenExit size={18} />
+              ) : (
+                <IconFullscreen size={18} />
+              )}
             </button>
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
-          <span className="truncate">
-            EP {episode} · {animeTitle}
-          </span>
-          <span className="truncate">
-            {payload.provider} · {activeSource.quality} ·{' '}
+        {/* Settings popover */}
+        {settingsOpen && (
+          <div className="absolute bottom-16 right-3 z-40 w-60 rounded-xl border border-white/10 bg-base-850/98 p-2 shadow-2xl animate-scale-in">
+            <p className="px-2 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+              Speed
+            </p>
+            <div className="grid grid-cols-3 gap-1">
+              {RATES.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => changeRate(r)}
+                  className={[
+                    'flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors',
+                    rate === r
+                      ? 'bg-accent/20 text-accent-soft'
+                      : 'text-zinc-300 hover:bg-white/[0.06]',
+                  ].join(' ')}
+                >
+                  {rate === r && <IconCheck size={12} />}
+                  {r}×
+                </button>
+              ))}
+            </div>
+
+            {levels.length > 1 && (
+              <>
+                <p className="mt-2 px-2 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+                  Quality
+                </p>
+                <div className="grid gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => selectLevel(-1)}
+                    className={[
+                      'flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors',
+                      currentLevel === -1 ? 'bg-accent/20 text-accent-soft' : 'text-zinc-300 hover:bg-white/[0.06]',
+                    ].join(' ')}
+                  >
+                    Auto
+                    {currentLevel === -1 && <IconCheck size={12} />}
+                  </button>
+                  {levels.map((l) => (
+                    <button
+                      key={l.index}
+                      type="button"
+                      onClick={() => selectLevel(l.index)}
+                      className={[
+                        'flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors',
+                        currentLevel === l.index
+                          ? 'bg-accent/20 text-accent-soft'
+                          : 'text-zinc-300 hover:bg-white/[0.06]',
+                      ].join(' ')}
+                    >
+                      {l.label}
+                      {currentLevel === l.index && <IconCheck size={12} />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <p className="mt-2 px-2 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+              Subtitles
+            </p>
             <button
               type="button"
-              className="underline decoration-dotted hover:text-zinc-300"
-              onClick={() => update({ preferredType: type === 'sub' ? 'dub' : 'sub' })}
+              onClick={() => {
+                const next = !prefs.subtitlesOn
+                update({ subtitlesOn: next })
+                setShowSubs(next)
+              }}
+              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-white/[0.06]"
             >
-              {type}
+              Subtitles on by default
+              <span
+                className={[
+                  'relative h-4 w-7 rounded-full transition-colors',
+                  prefs.subtitlesOn ? 'bg-accent' : 'bg-white/15',
+                ].join(' ')}
+              >
+                <span
+                  className={[
+                    'absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform',
+                    prefs.subtitlesOn ? 'translate-x-[0.9rem]' : 'translate-x-0.5',
+                  ].join(' ')}
+                />
+              </span>
             </button>
-          </span>
-        </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const next = !prefs.skipIntro
+                update({ skipIntro: next })
+              }}
+              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-white/[0.06]"
+            >
+              Skip intro automatically
+              <span
+                className={[
+                  'relative h-4 w-7 rounded-full transition-colors',
+                  prefs.skipIntro ? 'bg-accent' : 'bg-white/15',
+                ].join(' ')}
+              >
+                <span
+                  className={[
+                    'absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform',
+                    prefs.skipIntro ? 'translate-x-[0.9rem]' : 'translate-x-0.5',
+                  ].join(' ')}
+                />
+              </span>
+            </button>
+
+            <div className="mt-1.5 border-t border-white/[0.07] px-2 pt-2">
+              <p className="font-mono text-[0.6rem] leading-relaxed text-zinc-600">
+                SPACE play · ←/→ 5s · ↑/↓ vol · F full · M mute · P PiP · N next
+              </p>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Prev / next episode */}
+      <div
+        className={[
+          'absolute right-3 top-3 z-30 flex items-center gap-1.5 transition-opacity duration-200',
+          uiVisible || !playing ? 'opacity-100' : 'pointer-events-none opacity-0',
+        ].join(' ')}
+      >
+        {prevHref && (
+          <button
+            type="button"
+            onClick={() => router.push(prevHref)}
+            className="rounded-lg border border-white/10 bg-black/85 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-black"
+          >
+            Prev
+          </button>
+        )}
+        {nextHref && (
+          <button
+            type="button"
+            onClick={() => router.push(nextHref)}
+            className="rounded-lg border border-white/10 bg-black/85 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-black"
+          >
+            Next
+          </button>
+        )}
+      </div>
+
+      {inPip && (
+        <div className="pointer-events-none absolute left-3 top-3 z-30 rounded-lg bg-black/80 px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide text-zinc-300">
+          In picture-in-picture
+        </div>
+      )}
     </div>
   )
 }

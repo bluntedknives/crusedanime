@@ -4,7 +4,46 @@
 
 :root {
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --sidebar-w: 76px;
   color-scheme: dark;
+
+  /* ---- Crispy design tokens ---------------------------------------- *
+   * Ported from the Crispy UI reference. Surfaces are a neutral white
+   * film rather than accent-tinted, so poster art keeps its own colour.
+   */
+  --c-bg: #000000;
+  --c-bg-soft: #050506;
+  --c-surface: rgba(255, 255, 255, 0.02);
+  --c-surface-hover: rgba(255, 255, 255, 0.06);
+  --c-glass-border: rgba(255, 255, 255, 0.05);
+  --c-glass-border-strong: rgba(255, 255, 255, 0.07);
+
+  --c-fg: #ffffff;
+  --c-fg-soft: rgba(255, 255, 255, 0.9);
+  --c-fg-muted: rgba(255, 255, 255, 0.6);
+  --c-fg-faint: rgba(255, 255, 255, 0.45);
+  --c-fg-ghost: rgba(255, 255, 255, 0.3);
+
+  /* cosmin shadow recipes */
+  --c-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --c-lift: 0 0 40px -15px rgba(0, 0, 0, 0.3);
+  --c-shadow-nav: 0 20px 40px -20px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --c-shadow-btn: 0 32px 64px -16px rgba(0, 0, 0, 0.3),
+    0 16px 32px -8px rgba(0, 0, 0, 0.3), 0 8px 16px -4px rgba(0, 0, 0, 0.24),
+    0 4px 8px -2px rgba(0, 0, 0, 0.24), 0 -8px 16px -1px rgba(0, 0, 0, 0.16),
+    0 2px 4px -1px rgba(0, 0, 0, 0.24), inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --c-shadow-btn-hover: 0 16px 32px -8px rgba(0, 0, 0, 0.3),
+    0 8px 16px -4px rgba(0, 0, 0, 0.24), 0 4px 8px -2px rgba(0, 0, 0, 0.24),
+    0 2px 4px -1px rgba(0, 0, 0, 0.24), inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --c-rail-bg: rgba(6, 6, 8, 0.72);
+
+  --radius: 10px;
+  --radius-sm: 8px;
+  --radius-xl: 14px;
 }
 
 * {
@@ -13,79 +52,190 @@
 
 html,
 body {
-  @apply bg-ink-950 text-zinc-100;
+  @apply text-zinc-100;
   min-height: 100%;
+  background-color: #000;
 }
 
+/*
+ * Fixed backdrop: three soft radial glows over pure black. Neutral grey rather
+ * than tinted, so it reads as light falling on a dark room instead of a
+ * coloured wash over the artwork.
+ */
 body {
-  background-image:
-    radial-gradient(1200px 600px at 12% -8%, rgba(139, 92, 246, 0.14), transparent 60%),
-    radial-gradient(900px 500px at 88% 0%, rgba(56, 189, 248, 0.09), transparent 55%);
+  background-image: radial-gradient(
+      200% 200% at 50% -20%,
+      rgba(32, 32, 35, 0.12) 0%,
+      rgba(32, 32, 35, 0.084) 20%,
+      rgba(32, 32, 35, 0.036) 40%,
+      rgba(0, 0, 0, 0) 60%
+    ),
+    radial-gradient(
+      180% 180% at 15% 50%,
+      rgba(28, 28, 30, 0.08) 0%,
+      rgba(28, 28, 30, 0.048) 30%,
+      rgba(28, 28, 30, 0.016) 50%,
+      rgba(0, 0, 0, 0) 70%
+    ),
+    radial-gradient(
+      160% 160% at 85% 50%,
+      rgba(35, 35, 40, 0.05) 0%,
+      rgba(35, 35, 40, 0.035) 25%,
+      rgba(35, 35, 40, 0.015) 45%,
+      rgba(0, 0, 0, 0) 65%
+    );
   background-attachment: fixed;
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* Fine film grain. Pure CSS, no image asset, sits under all content. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
 }
-::-webkit-scrollbar-track {
-  background: #0b0b12;
+
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: rgba(200, 164, 77, 0.35);
+  color: #fff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.07) transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a2a38;
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 999px;
-  border: 2px solid #0b0b12;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a4c;
+  background: rgba(200, 164, 77, 0.45);
+  background-clip: content-box;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(200, 164, 77, 0.8);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 @layer components {
   .container-page {
-    @apply mx-auto w-full max-w-[1500px] px-4 sm:px-6 lg:px-10;
+    @apply mx-auto w-full max-w-[1560px] px-4 sm:px-6 lg:px-8;
   }
 
+  /* ---------------------------------------------------------- surfaces */
+  /* Crispy panel: white-film fill, hairline border, soft lift, top sheen. */
   .surface {
-    @apply rounded-xl border border-white/5 bg-ink-850/80 backdrop-blur;
+    position: relative;
+    background: var(--c-surface);
+    border: 1px solid var(--c-glass-border);
+    box-shadow: var(--c-lift);
+    @apply rounded-[10px] backdrop-blur-xl;
+  }
+  .surface::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    pointer-events: none;
+  }
+  .surface-raised {
+    position: relative;
+    background: var(--c-rail-bg);
+    border: 1px solid var(--c-glass-border-strong);
+    box-shadow: var(--c-shadow-nav);
+    @apply rounded-[10px] backdrop-blur-2xl;
+  }
+  .glass {
+    background: var(--c-surface);
+    border: 1px solid var(--c-glass-border);
+    @apply backdrop-blur-2xl;
   }
 
+  /* ------------------------------------------------------------- buttons */
   .btn {
-    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
-      transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/70
-      disabled:cursor-not-allowed disabled:opacity-50;
+    position: relative;
+    box-shadow: var(--c-shadow-btn);
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-[8px] px-4 py-2 text-sm
+      font-medium transition-all duration-150 focus-visible:outline-none
+      disabled:pointer-events-none disabled:opacity-45;
   }
   .btn-primary {
-    @apply btn bg-brand text-white hover:bg-brand-soft;
+    @apply btn bg-accent font-semibold text-black hover:brightness-110;
   }
   .btn-ghost {
-    @apply btn border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10;
+    @apply btn text-zinc-400 hover:bg-white/[0.06] hover:text-white;
+    box-shadow: none;
   }
   .btn-subtle {
-    @apply btn text-zinc-300 hover:bg-white/5;
+    @apply btn text-zinc-400 hover:bg-white/[0.06] hover:text-white;
+    box-shadow: none;
+  }
+  .btn-icon {
+    @apply grid place-items-center rounded-[8px] text-zinc-400 transition-colors
+      hover:bg-white/[0.07] hover:text-white focus-visible:outline-none;
   }
 
+  /* --------------------------------------------------------------- chips */
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 py-1
-      text-[11px] font-medium uppercase tracking-wide text-zinc-300;
+    @apply inline-flex items-center gap-1 rounded-[6px] border border-white/[0.07] bg-white/[0.04] px-1.5 py-0.5
+      font-mono text-[0.65rem] uppercase tracking-wider text-zinc-400;
   }
-
+  .chip-accent {
+    @apply border-accent/30 bg-accent/[0.09] text-accent-soft;
+  }
+  .chip-live {
+    @apply border-signal/30 bg-signal/[0.09] text-signal;
+  }
   .chip-active {
-    @apply border-brand/60 bg-brand/20 text-brand-soft;
+    @apply border-accent/45 bg-accent/[0.13] text-accent-soft;
   }
 
+  /* --------------------------------------------------------------- forms */
   .input {
-    @apply w-full rounded-lg border border-white/10 bg-ink-800 px-3.5 py-2.5 text-sm text-zinc-100
-      placeholder:text-zinc-500 focus:border-brand/60 focus:outline-none focus:ring-2 focus:ring-brand/25;
+    @apply w-full rounded-[8px] border border-white/[0.07] bg-white/[0.02] px-3.5 py-2.5 text-sm text-zinc-100
+      placeholder:text-zinc-600 focus:border-accent/45 focus:outline-none focus:ring-2 focus:ring-accent/15;
   }
-
   .label {
-    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-zinc-500;
+    @apply mb-1.5 block font-mono text-[0.65rem] font-medium uppercase tracking-[0.14em] text-zinc-500;
   }
 
+  /* ------------------------------------------------------------ headings */
   .section-title {
-    @apply text-lg font-semibold tracking-tight text-zinc-100 sm:text-xl;
+    @apply font-display text-lg font-semibold tracking-tight text-zinc-50 sm:text-xl;
+  }
+  .rail-title {
+    @apply font-display text-base font-semibold tracking-tight text-zinc-100;
+  }
+  /* Eyebrow label with a leading rule, as in the Crispy section header. */
+  .eyebrow {
+    @apply inline-flex items-center gap-2 font-mono text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-zinc-500;
+  }
+  .eyebrow::before {
+    content: '';
+    @apply h-px w-3.5 bg-accent/50;
   }
 
+  /* ------------------------------------------------------------ utilities */
   .line-clamp-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -106,14 +256,98 @@ body {
   }
 
   .skeleton {
-    background: linear-gradient(90deg, #16161f 0%, #22222f 40%, #16161f 80%);
+    background: linear-gradient(90deg, #101014 0%, #1c1c23 40%, #101014 80%);
     background-size: 500px 100%;
     @apply animate-shimmer rounded-lg;
   }
 
   .poster-shadow {
-    box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.9);
+    box-shadow: 0 20px 44px -24px rgba(0, 0, 0, 0.95);
   }
+
+  /* Hairline that fades out, used as section dividers. */
+  .hairline {
+    height: 1px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0));
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Icon nav rail (Crispy): vertical on desktop, tooltips on hover.
+ * ------------------------------------------------------------------ */
+
+.rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--c-glass-border-strong);
+  background: var(--c-rail-bg);
+  box-shadow: var(--c-shadow-nav);
+  backdrop-filter: blur(24px);
+}
+
+.rail-indicator {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.25rem;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--c-glass-border-strong),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transform: translateY(calc(var(--i, 0) * (34px + 0.125rem)));
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.rail-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--c-fg-faint);
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.rail-btn:hover,
+.rail-btn[aria-current='page'] {
+  color: #fff;
+}
+
+.rail-tip {
+  position: absolute;
+  left: calc(100% + 0.6rem);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 0.28rem 0.55rem;
+  border-radius: 7px;
+  background: var(--c-rail-bg);
+  box-shadow: inset 0 0 0 1px var(--c-glass-border-strong), var(--c-shadow-nav);
+  backdrop-filter: blur(12px);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fff;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 50;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.rail-btn:hover .rail-tip,
+.rail-btn:focus-visible .rail-tip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
 .scrollbar-none {
@@ -123,7 +357,46 @@ body {
   display: none;
 }
 
-/* Video.js / hls.js native control styling */
+/* Range inputs (seek + volume) styled to match the monochrome theme. */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  margin-top: -4px;
+  height: 12px;
+  width: 12px;
+  border-radius: 999px;
+  background: #fff;
+}
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+input[type='range']::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: none;
+  border-radius: 999px;
+  background: #fff;
+}
+
+/* Subtitles rendered by hls.js / native tracks. */
+video::cue {
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: 1em;
+  line-height: 1.4;
+}
 video::-webkit-media-controls-panel {
   background-image: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
 }

@@ -4,7 +4,7 @@ export default function NotFound() {
   return (
     <div className="container-page grid min-h-[60vh] place-items-center pt-10">
       <div className="text-center">
-        <p className="text-6xl font-black text-brand">404</p>
+        <p className="text-6xl font-black text-accent">404</p>
         <h1 className="mt-3 text-xl font-bold text-zinc-100">We could not find that title</h1>
         <p className="mx-auto mt-2 max-w-sm text-sm text-zinc-500">
           The anime id or episode may be wrong, or AniList no longer has that entry.

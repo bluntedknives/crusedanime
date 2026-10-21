@@ -17,6 +17,15 @@ function timeUntil(airingAt: number): number {
   return Math.max(0, airingAt - Math.floor(Date.now() / 1000))
 }
 
+/**
+ * Deterministic timestamp for the tooltip. `toLocaleString` renders in the
+ * server's zone at SSR and the visitor's zone on hydration, which is a text
+ * mismatch; ISO is the same everywhere.
+ */
+function utcStamp(airingAt: number): string {
+  return new Date(airingAt * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+}
+
 export default function AiringCountdown({
   airingAt,
   episode,
@@ -24,7 +33,10 @@ export default function AiringCountdown({
   prefix,
   compact = false,
 }: Props) {
-  const [remaining, setRemaining] = useState(() => timeUntil(airingAt))
+  // Starts null so the server and the first client render agree: computing the
+  // countdown during render would read the clock at two different instants and
+  // mismatch on hydration.
+  const [remaining, setRemaining] = useState<number | null>(null)
 
   useEffect(() => {
     setRemaining(timeUntil(airingAt))
@@ -32,9 +44,10 @@ export default function AiringCountdown({
     return () => clearInterval(id)
   }, [airingAt])
 
-  const aired = remaining <= 0
+  const known = remaining !== null
+  const aired = known && remaining <= 0
   const text = prefix ?? (episode ? `EP ${episode} in ` : '')
-  const soon = remaining > 0 && remaining < 3600
+  const soon = known && remaining > 0 && remaining < 3600
 
   return (
     <span
@@ -48,12 +61,12 @@ export default function AiringCountdown({
         compact ? 'px-1.5 py-0' : '',
         className,
       ].join(' ')}
-      title={new Date(airingAt * 1000).toLocaleString()}
+      title={utcStamp(airingAt)}
     >
-      {!aired && (
+      {known && !aired && (
         <span className={['h-1.5 w-1.5 rounded-full', soon ? 'bg-amber-400' : 'bg-emerald-400'].join(' ')} />
       )}
-      {aired ? 'Aired' : `${text}${formatCountdown(remaining)}`}
+      {!known ? '—' : aired ? 'Aired' : `${text}${formatCountdown(remaining)}`}
     </span>
   )
 }

@@ -46,8 +46,8 @@ function EpisodeRow({
       className={[
         'group relative flex items-center gap-3 rounded-lg border p-2.5 transition',
         isCurrent
-          ? 'border-brand/60 bg-brand/10'
-          : 'border-white/5 bg-ink-850/60 hover:border-white/15 hover:bg-ink-800',
+          ? 'border-accent/60 bg-accent/10'
+          : 'border-white/5 bg-base-850/60 hover:border-white/15 hover:bg-base-800',
       ].join(' ')}
     >
       <span
@@ -64,7 +64,7 @@ function EpisodeRow({
         <span
           className={[
             'block truncate text-[13px] font-medium',
-            isCurrent ? 'text-brand-soft' : 'text-zinc-100',
+            isCurrent ? 'text-accent-soft' : 'text-zinc-100',
           ].join(' ')}
         >
           {ep.title?.trim() ? `EP ${ep.number} · ${ep.title}` : `Episode ${ep.number}`}
@@ -79,14 +79,14 @@ function EpisodeRow({
 
         {pct > 0 && (
           <span className="mt-1.5 block h-1 w-full overflow-hidden rounded-full bg-white/10">
-            <span className="block h-full bg-brand" style={{ width: `${pct}%` }} />
+            <span className="block h-full bg-accent" style={{ width: `${pct}%` }} />
           </span>
         )}
       </span>
 
-      <span className="shrink-0 text-zinc-500 transition group-hover:text-brand-soft">
+      <span className="shrink-0 text-zinc-500 transition group-hover:text-accent-soft">
         {isCurrent ? (
-          <span className="text-[11px] font-semibold text-brand-soft">
+          <span className="text-[11px] font-semibold text-accent-soft">
             {progress?.duration ? formatTime(progress.position) : 'Resume'}
           </span>
         ) : (

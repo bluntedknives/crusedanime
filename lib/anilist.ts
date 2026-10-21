@@ -165,6 +165,10 @@ export interface SearchFilters {
 
 /* ---------------------------------------------------------------- caching */
 
+/** How long to stop calling AniList after it reports the API is disabled. */
+const BREAKER_MS = 120_000
+let breakerUntil = 0
+
 interface CacheEntry<T> {
   value: T
   expires: number
@@ -196,6 +200,16 @@ function cacheGet<T>(key: string): T | null {
   store.delete(key)
   store.set(key, hit)
   return hit.value as T
+}
+
+/**
+ * Read an entry past its TTL. Used as a last resort when the upstream is
+ * unavailable: stale metadata is far better than an empty page, and AniList
+ * has taken the API fully offline for stretches at a time.
+ */
+function cacheGetStale<T>(key: string): T | null {
+  const hit = store.get(key)
+  return hit ? (hit.value as T) : null
 }
 
 function cacheSet<T>(key: string, value: T, ttl: number): void {
@@ -240,6 +254,14 @@ async function gql<T>(
   const ttl = opts.ttl ?? TTL.medium
   const key = `${query.length}:${JSON.stringify(variables)}`
 
+  // Circuit breaker. AniList disables its API outright for minutes at a time
+  // and answers every query with 403; retrying each request three times with
+  // backoff just adds ~6s of dead latency to every page. Once we see that, stop
+  // asking for a while and let the data layer go straight to the fallback.
+  if (Date.now() < breakerUntil) {
+    throw new AniListError('AniList circuit open (API disabled upstream)', 403)
+  }
+
   const cached = cacheGet<T>(key)
   if (cached !== null) return cached
 
@@ -261,8 +283,16 @@ async function gql<T>(
           next: { revalidate: opts.revalidate ?? 0 },
         })
 
+        if (res.status === 403) {
+          // AniList returns 403 when it has disabled the API for stability
+          // reasons. That is global and lasts minutes, so retrying is pointless:
+          // trip the breaker and fail fast until it expires.
+          breakerUntil = Date.now() + BREAKER_MS
+          throw new AniListError('AniList API disabled upstream', 403)
+        }
+
         if (res.status === 429) {
-          // Rate limited: back off then retry.
+          // Documented rate limit: worth a short backoff and retry.
           await sleep(1000 * (attempt + 1))
           continue
         }
@@ -288,6 +318,15 @@ async function gql<T>(
         await sleep(300 * (attempt + 1))
       }
     }
+
+    // Upstream is down. Serve a stale entry if we have one rather than
+    // failing the page; `data` may be incomplete, so surface it as a warning.
+    const stale = cacheGetStale<T>(key)
+    if (stale !== null) {
+      console.warn('[anilist] serving stale cache after upstream failure')
+      return stale
+    }
+
     throw lastErr instanceof Error ? lastErr : new AniListError('AniList request failed')
   })()
 
@@ -590,6 +629,17 @@ export interface AiringScheduleEntry {
   airingAt: number
   timeUntilAiring: number
   media: Media
+  /**
+   * False when the provider only published a date (no clock time), in which
+   * case `airingAt` is midnight UTC of that date and must not be rendered as a
+   * precise air time.
+   */
+  timeKnown?: boolean
+  /**
+   * True only when the slot itself was invented (no provider published a date).
+   * Real dates are `derived: false` even though their clock time is unknown.
+   */
+  derived?: boolean
 }
 
 export async function airingSchedule(from: number, to: number, page = 1, perPage = 50) {
@@ -638,6 +688,18 @@ export function scoreOf(m: Pick<Media, 'averageScore' | 'meanScore'>): number | 
 export function formatLabel(f: MediaFormat | null | undefined): string {
   if (!f) return '—'
   return f.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+const STATUS_LABEL: Record<MediaStatus, string> = {
+  FINISHED: 'Finished',
+  RELEASING: 'Airing',
+  NOT_YET_RELEASED: 'Upcoming',
+  CANCELLED: 'Cancelled',
+  HIATUS: 'Hiatus',
+}
+
+export function statusLabel(s: MediaStatus | null | undefined): string {
+  return s ? STATUS_LABEL[s] ?? '—' : '—'
 }
 
 export function seasonLabel(season: MediaSeason | null | undefined, year: number | null | undefined) {

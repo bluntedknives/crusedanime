@@ -55,6 +55,12 @@ export interface EpisodeInfo {
   filler: boolean
   hasSub: boolean
   hasDub: boolean
+  /**
+   * Season this episode belongs to. Only the film/series catalogue populates
+   * it; external embed providers are season-addressed, so it must survive the
+   * trip from Cinemeta to the player.
+   */
+  season?: number | null
   /** Provider-native ids used to address this episode later. */
   ani?: string | null
   mal?: string | null
@@ -113,13 +119,32 @@ function similarity(a: string, b: string): number {
   return shared / Math.max(ta.size, tb.size)
 }
 
+/**
+ * Wall-clock budget for a whole resolution attempt. Provider retries multiply
+ * (title variants x search attempts x servers), so without a shared deadline a
+ * single slow host can hold the request open for minutes.
+ */
+const RESOLVE_BUDGET_MS = 95_000
+
+/** Milliseconds left in the budget, or Infinity when unbounded. */
+function remainingMs(deadline?: number): number {
+  if (!deadline) return Number.POSITIVE_INFINITY
+  return deadline - Date.now()
+}
+
 async function fetchWithTimeout(
   url: string,
-  init: RequestInit & { timeout?: number } = {},
+  init: RequestInit & { timeout?: number; deadline?: number } = {},
 ): Promise<Response> {
-  const { timeout = 15_000, ...rest } = init
+  const { timeout = 15_000, deadline, ...rest } = init
+
+  // Never let one request outlive the overall budget.
+  const budget = remainingMs(deadline)
+  if (budget <= 0) throw new StreamError('request budget exhausted', 'zangetsu')
+  const effective = Math.min(timeout, budget)
+
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeout)
+  const timer = setTimeout(() => ctrl.abort(), effective)
   try {
     return await fetch(url, {
       ...rest,
@@ -181,7 +206,7 @@ interface ZSearchHit {
  * `response` array. That soft failure must not be cached as "no results", so
  * we retry with backoff and only cache a non-empty result set.
  */
-async function zSearch(term: string): Promise<ZSearchHit[]> {
+async function zSearch(term: string, deadline?: number): Promise<ZSearchHit[]> {
   const key = `z:search:${term.toLowerCase()}`
   const hit = cache.get(key)
   if (hit && hit.expires > Date.now()) return hit.value as ZSearchHit[]
@@ -191,11 +216,17 @@ async function zSearch(term: string): Promise<ZSearchHit[]> {
 
   const run = (async () => {
     let lastErr: unknown
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Upstream search routinely takes 20-40s, so retrying three times inside a
+    // single 15s window would guarantee failure. One long attempt, then a
+    // single short retry only if there is budget left.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (remainingMs(deadline) <= 0) break
       try {
         const res = await fetchWithTimeout(
           `${ZANGETSU}/ajax/search?keyword=${encodeURIComponent(term)}`,
           {
+            deadline,
+            timeout: 45_000,
             headers: {
               'X-Requested-With': 'XMLHttpRequest',
               Referer: `${ZANGETSU}/`,
@@ -215,7 +246,7 @@ async function zSearch(term: string): Promise<ZSearchHit[]> {
         return json.response
       } catch (err) {
         lastErr = err
-        await sleep(400 * (attempt + 1))
+        await sleep(500)
       }
     }
     throw lastErr instanceof Error ? lastErr : new StreamError('search failed', 'zangetsu')
@@ -235,9 +266,11 @@ interface ZSession {
   cookie: string
 }
 
-async function zSession(slug: string): Promise<ZSession> {
+async function zSession(slug: string, deadline?: number): Promise<ZSession> {
   return cached(`z:session:${slug}`, 3 * 60_000, async () => {
     const res = await fetchWithTimeout(`${ZANGETSU}/watch/${slug}`, {
+      deadline,
+      timeout: 30_000,
       headers: { Referer: `${ZANGETSU}/` },
     })
     if (!res.ok) throw new StreamError(`watch page ${res.status}`, 'zangetsu')
@@ -257,8 +290,15 @@ async function zSession(slug: string): Promise<ZSession> {
   })
 }
 
-async function zAjax<T>(path: string, slug: string, session: ZSession): Promise<T> {
+async function zAjax<T>(
+  path: string,
+  slug: string,
+  session: ZSession,
+  deadline?: number,
+): Promise<T> {
   const res = await fetchWithTimeout(`${ZANGETSU}${path}`, {
+    deadline,
+    timeout: 30_000,
     headers: {
       'X-Page-Token': session.token,
       'X-Requested-With': 'XMLHttpRequest',
@@ -295,15 +335,17 @@ export async function resolveAnime(input: {
   malId?: number | null
   title: string
   altTitles?: string[]
+  deadline?: number
 }): Promise<ResolvedAnime> {
-  const { anilistId, malId, title, altTitles = [] } = input
+  const { anilistId, malId, title, altTitles = [], deadline } = input
   return cached(`z:resolve:${anilistId}`, 30 * 60_000, async () => {
     const candidates = [title, ...altTitles].filter(Boolean)
     const seen = new Map<number, ZSearchHit>()
 
     for (const term of candidates) {
+      if (remainingMs(deadline) <= 0) break
       try {
-        for (const hit of await zSearch(term)) seen.set(hit.id, hit)
+        for (const hit of await zSearch(term, deadline)) seen.set(hit.id, hit)
       } catch {
         /* try the next title variant */
       }
@@ -325,12 +367,14 @@ export async function resolveAnime(input: {
     // Walk candidates in score order and accept the first whose episode ids
     // corroborate the requested AniList/MAL id.
     for (const { hit } of scored.slice(0, 4)) {
+      if (remainingMs(deadline) <= 0) break
       try {
-        const session = await zSession(hit.slug)
+        const session = await zSession(hit.slug, deadline)
         const data = await zAjax<{ success?: boolean; episodes?: ZEpisode[] }>(
           `/ajax/episodes?animeId=${hit.id}`,
           hit.slug,
           session,
+          deadline,
         )
         const eps = data.episodes ?? []
         if (!eps.length) continue
@@ -437,11 +481,13 @@ async function zSourcesForEpisode(
   type: 'sub' | 'dub',
   slug: string,
   session: ZSession,
+  deadline?: number,
 ): Promise<StreamPayload> {
   const servers = await zAjax<Record<string, ZServer[]>>(
     `/ajax/server?episodeId=${encodeURIComponent(ep.id)}&sub=${type === 'sub'}&dub=${type === 'dub'}`,
     slug,
     session,
+    deadline,
   )
 
   const list = (servers[type] ?? []).slice().sort((a, b) => {
@@ -451,12 +497,14 @@ async function zSourcesForEpisode(
 
   let lastErr: unknown
   for (const server of list) {
+    if (remainingMs(deadline) <= 0) break
     const embed = zEmbedUrl(server.serverName, ep, type)
     if (!embed) continue
     const base = new URL(embed).origin
 
     try {
       const page = await fetchWithTimeout(embed, {
+        deadline,
         headers: { Referer: `${ZANGETSU}/` },
         timeout: 20_000,
       })
@@ -467,6 +515,7 @@ async function zSourcesForEpisode(
       if (!m) throw new StreamError('embed exposed no manifest url', 'zangetsu')
 
       const manifestRes = await fetchWithTimeout(absolutise(m[1], base), {
+        deadline,
         headers: { Referer: embed, Accept: 'application/json, text/plain, */*' },
         timeout: 20_000,
       })
@@ -590,21 +639,23 @@ export async function resolveStream(input: ResolveStreamInput): Promise<StreamPa
   const key = `stream:${input.anilistId}:${input.episode}:${type}`
   return cached(key, 15 * 60_000, async () => {
     const errors: string[] = []
+    const deadline = Date.now() + RESOLVE_BUDGET_MS
 
     try {
-      const resolved = await resolveAnime(input)
+      const resolved = await resolveAnime({ ...input, deadline })
       const ep =
         resolved.episodes.find((e) => e.number === input.episode) ??
         resolved.episodes[input.episode - 1]
       if (!ep) throw new StreamError(`episode ${input.episode} is not in the provider list`, 'zangetsu')
 
-      const session = await zSession(resolved.slug)
-      return await zSourcesForEpisode(ep, type, resolved.slug, session)
+      const session = await zSession(resolved.slug, deadline)
+      return await zSourcesForEpisode(ep, type, resolved.slug, session, deadline)
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err))
     }
 
     for (const instance of CONSUMET_INSTANCES) {
+      if (remainingMs(deadline) <= 0) break
       try {
         return await consumetGogo(instance, input.title, input.episode, type)
       } catch (err) {
@@ -617,6 +668,13 @@ export async function resolveStream(input: ResolveStreamInput): Promise<StreamPa
   })
 }
 
+/**
+ * Episode lists fall back to AniList-derived placeholders, so waiting a long
+ * time for the provider is worse than degrading. Kept short enough that the
+ * watch page still paints during an upstream slow spell.
+ */
+const EPISODES_BUDGET_MS = 30_000
+
 /** Episode list with provider metadata, used by the watch and detail pages. */
 export async function getEpisodes(input: {
   anilistId: number
@@ -626,8 +684,9 @@ export async function getEpisodes(input: {
   /** Fallback count from AniList when the provider has no list yet. */
   totalEpisodes?: number | null
 }): Promise<EpisodeInfo[]> {
+  const deadline = Date.now() + EPISODES_BUDGET_MS
   try {
-    const resolved = await resolveAnime(input)
+    const resolved = await resolveAnime({ ...input, deadline })
     return resolved.episodes
   } catch {
     // Provider has no entry yet: synthesise a list from AniList metadata so

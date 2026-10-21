@@ -35,7 +35,7 @@ function EntryCard({
       <div className="surface flex items-center gap-3 p-2.5">
         <Link
           href={`/anime/${entry.id}`}
-          className="h-[76px] w-[54px] shrink-0 overflow-hidden rounded bg-ink-700"
+          className="h-[76px] w-[54px] shrink-0 overflow-hidden rounded bg-base-700"
         >
           {entry.poster ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -46,7 +46,7 @@ function EntryCard({
         <div className="min-w-0 flex-1">
           <Link
             href={`/anime/${entry.id}`}
-            className="line-clamp-1 text-[13.5px] font-medium text-zinc-100 hover:text-brand-soft"
+            className="line-clamp-1 text-[13.5px] font-medium text-zinc-100 hover:text-accent-soft"
           >
             {entry.title}
           </Link>
@@ -56,13 +56,13 @@ function EntryCard({
               .join(' · ')}
           </p>
           {progress && (
-            <p className="mt-1 text-[11px] text-brand-soft">
+            <p className="mt-1 text-[11px] text-accent-soft">
               EP {progress.episode} · {formatTime(progress.position)}
             </p>
           )}
           {pct > 0 && (
             <div className="mt-1.5 h-1 w-full max-w-xs overflow-hidden rounded-full bg-white/10">
-              <div className="h-full bg-brand" style={{ width: `${pct}%` }} />
+              <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
             </div>
           )}
         </div>
@@ -71,7 +71,7 @@ function EntryCard({
           <select
             value={entry.status}
             onChange={(e) => onStatus(e.target.value as WatchStatus)}
-            className="rounded-md border border-white/10 bg-ink-800 px-2 py-1.5 text-[11px] text-zinc-200"
+            className="rounded-md border border-white/10 bg-base-800 px-2 py-1.5 text-[11px] text-zinc-200"
           >
             {ORDER.map((s) => (
               <option key={s} value={s}>
@@ -101,7 +101,7 @@ function EntryCard({
   return (
     <div className="group">
       <Link href={`/anime/${entry.id}`} className="relative block">
-        <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-ink-800 poster-shadow">
+        <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-base-800 poster-shadow">
           {entry.poster ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -118,11 +118,11 @@ function EntryCard({
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
           {pct > 0 && (
             <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
-              <div className="h-full bg-brand" style={{ width: `${pct}%` }} />
+              <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
             </div>
           )}
           {progress && (
-            <span className="absolute bottom-2 left-2 rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold text-brand-soft">
+            <span className="absolute bottom-2 left-2 rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold text-accent-soft">
               EP {progress.episode}
             </span>
           )}
@@ -132,7 +132,7 @@ function EntryCard({
       <div className="mt-2">
         <Link
           href={`/anime/${entry.id}`}
-          className="line-clamp-2 text-[13px] font-medium leading-snug text-zinc-100 hover:text-brand-soft"
+          className="line-clamp-2 text-[13px] font-medium leading-snug text-zinc-100 hover:text-accent-soft"
         >
           {entry.title}
         </Link>
@@ -140,7 +140,7 @@ function EntryCard({
           <select
             value={entry.status}
             onChange={(e) => onStatus(e.target.value as WatchStatus)}
-            className="min-w-0 flex-1 rounded-md border border-white/10 bg-ink-800 px-1.5 py-1 text-[10.5px] text-zinc-300"
+            className="min-w-0 flex-1 rounded-md border border-white/10 bg-base-800 px-1.5 py-1 text-[10.5px] text-zinc-300"
           >
             {ORDER.map((s) => (
               <option key={s} value={s}>
@@ -150,7 +150,7 @@ function EntryCard({
           </select>
           <Link
             href={`/watch/${entry.id}/${progress?.episode ?? 1}`}
-            className="shrink-0 rounded-md bg-brand/90 px-2 py-1 text-[10.5px] font-semibold text-white hover:bg-brand"
+            className="shrink-0 rounded-md bg-accent/90 px-2 py-1 text-[10.5px] font-semibold text-white hover:bg-accent"
           >
             ▶
           </Link>
@@ -258,7 +258,7 @@ export default function WatchlistPage() {
                 href={`/watch/${p.animeId}/${p.episode}${p.type === 'dub' ? '?type=dub' : ''}`}
                 className="group w-[220px] shrink-0 snap-start"
               >
-                <div className="relative h-[124px] overflow-hidden rounded-lg bg-ink-800">
+                <div className="relative h-[124px] overflow-hidden rounded-lg bg-base-800">
                   {p.poster ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -279,7 +279,7 @@ export default function WatchlistPage() {
                     </p>
                   </div>
                   <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
-                    <div className="h-full bg-brand" style={{ width: `${progressPercent(p)}%` }} />
+                    <div className="h-full bg-accent" style={{ width: `${progressPercent(p)}%` }} />
                   </div>
                 </div>
               </Link>

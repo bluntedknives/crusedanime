@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { decodeTarget, encodeTarget } from '@/lib/cover'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -70,7 +71,9 @@ function rewritePlaylist(
     } catch {
       return target
     }
-    return `${origin}/api/proxy?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(referer)}`
+    // The target is base64url-encoded rather than escaped, so the upstream host
+    // never appears in the playlist or in any request an extension can observe.
+    return `${origin}/api/proxy?t=${encodeTarget(abs, referer)}`
   }
 
   // Subtitle playlists are WebVTT/segments; rewriting their relative paths is
@@ -113,9 +116,28 @@ function requestOrigin(req: NextRequest): string {
   return new URL(req.url).origin
 }
 
+/**
+ * Resolve the request target from either the encoded `t` token (preferred) or
+ * the legacy `url`/`referer` params, which older playlists may still carry.
+ */
+function readTarget(searchParams: URLSearchParams): { target: URL; referer: string } | null {
+  const token = searchParams.get('t')
+  if (token) {
+    const decoded = decodeTarget(token)
+    if (!decoded) return null
+    const target = parseTarget(decoded.url)
+    if (!target) return null
+    return { target, referer: decoded.referer || `${target.origin}/` }
+  }
+  const target = parseTarget(searchParams.get('url'))
+  if (!target) return null
+  return { target, referer: searchParams.get('referer') || `${target.origin}/` }
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const target = parseTarget(searchParams.get('url'))
+  const resolved = readTarget(searchParams)
+  const target = resolved?.target
   if (!target) {
     return new Response(JSON.stringify({ error: 'invalid or disallowed url' }), {
       status: 400,
@@ -123,7 +145,7 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  const referer = searchParams.get('referer') || `${target.origin}/`
+  const referer = resolved.referer
   const range = req.headers.get('range')
 
   const upstreamHeaders: Record<string, string> = {
@@ -247,13 +269,14 @@ export async function GET(req: NextRequest) {
 
 export async function HEAD(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const target = parseTarget(searchParams.get('url'))
+  const resolved = readTarget(searchParams)
+  const target = resolved?.target
   if (!target) return new Response(null, { status: 400, headers: corsHeaders() })
 
   try {
     const upstream = await fetch(target.toString(), {
       method: 'HEAD',
-      headers: { 'User-Agent': UA, Referer: searchParams.get('referer') || `${target.origin}/` },
+      headers: { 'User-Agent': UA, Referer: resolved.referer },
       cache: 'no-store',
     })
     return new Response(null, {

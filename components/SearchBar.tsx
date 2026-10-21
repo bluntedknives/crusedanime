@@ -1,210 +1,339 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { posterOf, titleOf, type Media } from '@/lib/anilist'
+import { IconClose, IconSearch } from './icons'
+import { formatLabel, posterOf, scoreOf, seasonLabel, titleOf, type Media } from '@/lib/anilist'
+import { detailPath } from './PosterCard'
+
+const RECENT_KEY = 'anistream:recent-searches:v1'
+const RECENT_MAX = 8
 
 interface Props {
-  /** Controlled initial value (used on the search page). */
-  initialValue?: string
-  /** Debounced callback; fired ~320ms after typing stops. */
-  onChange?: (value: string) => void
-  onSubmit?: (value: string) => void
-  placeholder?: string
-  compact?: boolean
+  /** Initial text; the search page seeds this from the URL. */
+  initialQuery?: string
+  /** Called as the visitor types, after the caller's own debounce. */
+  onQueryChange: (q: string) => void
+  /** Called when a suggestion or recent search is committed. */
+  onSubmit?: (q: string) => void
   autoFocus?: boolean
-  /** Show the live suggestion dropdown. */
-  suggestions?: boolean
+  /** Shorter field for the top bar. */
+  compact?: boolean
+  /** Focus the field when "/" is pressed anywhere outside a text field. */
+  hotkey?: boolean
 }
 
-interface Suggestion {
-  id: number
-  title: string
-  poster: string
-  year: number | null
-  format: string | null
+export function readRecent(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(RECENT_KEY)
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
 }
 
+export function pushRecent(term: string): void {
+  const t = term.trim()
+  if (!t || typeof window === 'undefined') return
+  try {
+    const next = [t, ...readRecent().filter((r) => r.toLowerCase() !== t.toLowerCase())].slice(
+      0,
+      RECENT_MAX,
+    )
+    window.localStorage.setItem(RECENT_KEY, JSON.stringify(next))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearRecent(): void {
+  try {
+    window.localStorage.removeItem(RECENT_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Search field with live suggestions, recent searches and keyboard navigation.
+ *
+ * Suggestions come from `/api/search`, which merges both catalogues. Querying
+ * only the anime endpoint made every film and series invisible here — typing
+ * "South Park" produced nothing even though the title exists in the app.
+ */
 export default function SearchBar({
-  initialValue = '',
-  onChange,
+  initialQuery = '',
+  onQueryChange,
   onSubmit,
-  placeholder = 'Search anime…',
-  compact = false,
   autoFocus = false,
-  suggestions = true,
+  compact = false,
+  hotkey = false,
 }: Props) {
   const router = useRouter()
-  const [value, setValue] = useState(initialValue)
+  const [value, setValue] = useState(initialQuery)
   const [open, setOpen] = useState(false)
-  const [items, setItems] = useState<Suggestion[]>([])
-  const [loading, setLoading] = useState(false)
-  const [highlight, setHighlight] = useState(-1)
+  const [suggestions, setSuggestions] = useState<Media[]>([])
+  const [recent, setRecent] = useState<string[]>([])
+  const [active, setActive] = useState(-1)
   const boxRef = useRef<HTMLDivElement>(null)
-  const skipFetch = useRef(true)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  // Keep in sync when the URL changes underneath us (back/forward).
+  useEffect(() => setRecent(readRecent()), [])
+
+  // "/" focuses the field, matching the convention every media site uses.
   useEffect(() => {
-    setValue(initialValue)
-  }, [initialValue])
-
-  // Debounced notify + suggestion fetch.
-  useEffect(() => {
-    if (skipFetch.current) {
-      skipFetch.current = false
-      return
-    }
-
-    const term = value.trim()
-    const handle = setTimeout(() => {
-      onChange?.(value)
-
-      if (!suggestions || term.length < 2) {
-        setItems([])
-        setLoading(false)
-        return
+    if (!hotkey) return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      const typing =
+        t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      if (e.key === '/' && !typing) {
+        e.preventDefault()
+        inputRef.current?.focus()
+        setOpen(true)
       }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hotkey])
 
-      const ctrl = new AbortController()
-      setLoading(true)
-      fetch(`/api/anilist?action=search&q=${encodeURIComponent(term)}&perPage=6`, {
-        signal: ctrl.signal,
-      })
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-        .then((data: { media?: Media[] }) => {
-          setItems(
-            (data.media ?? []).map((m) => ({
-              id: m.id,
-              title: titleOf(m),
-              poster: posterOf(m),
-              year: m.seasonYear ?? m.startDate?.year ?? null,
-              format: m.format ?? null,
-            })),
-          )
-          setOpen(true)
-          setHighlight(-1)
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false))
-
-      return () => ctrl.abort()
-    }, 320)
-
-    return () => clearTimeout(handle)
-  }, [value, onChange, suggestions])
-
+  // Close on outside click.
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    const onDown = (e: MouseEvent) => {
       if (!boxRef.current?.contains(e.target as Node)) setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
   }, [])
 
-  const submit = (term: string) => {
-    setOpen(false)
-    if (onSubmit) onSubmit(term)
-    else if (term.trim()) router.push(`/search?q=${encodeURIComponent(term.trim())}`)
-  }
+  // Fetch suggestions for the current text. Shorter than the results debounce
+  // so the dropdown feels responsive.
+  useEffect(() => {
+    const term = value.trim()
+    if (term.length < 2) {
+      setSuggestions([])
+      return
+    }
+    const ctrl = new AbortController()
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(term)}&limit=8`, {
+          signal: ctrl.signal,
+        })
+        const data = await res.json()
+        // Films and series are ranked in among the anime so a title from either
+        // catalogue can be the top hit.
+        setSuggestions((data.results ?? []).slice(0, 7))
+      } catch {
+        /* aborted or failed: leave the previous list */
+      }
+    }, 180)
+    return () => {
+      clearTimeout(t)
+      ctrl.abort()
+    }
+  }, [value])
+
+  const commit = useCallback(
+    (term: string) => {
+      const t = term.trim()
+      if (!t) return
+      pushRecent(t)
+      setRecent(readRecent())
+      setOpen(false)
+      setActive(-1)
+      inputRef.current?.blur()
+      onSubmit?.(t)
+      onQueryChange(t)
+      setValue(t)
+    },
+    [onQueryChange, onSubmit],
+  )
+
+  const goToAnime = useCallback(
+    (id: number) => {
+      if (value.trim()) pushRecent(value.trim())
+      setOpen(false)
+      // Films and series have their own detail route; `detailPath` decides.
+      router.push(detailPath(id))
+    },
+    [router, value],
+  )
+
+  const options = useMemo(
+    () => (value.trim().length >= 2 ? suggestions.map((s) => s.id) : []),
+    [value, suggestions],
+  )
+
+  const showRecent = value.trim().length < 2 && recent.length > 0
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown' && items.length) {
+    if (e.key === 'Escape') {
+      setOpen(false)
+      setActive(-1)
+      return
+    }
+    if (e.key === 'ArrowDown') {
       e.preventDefault()
       setOpen(true)
-      setHighlight((h) => (h + 1) % items.length)
-    } else if (e.key === 'ArrowUp' && items.length) {
+      setActive((i) => (options.length ? (i + 1) % options.length : -1))
+      return
+    }
+    if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setHighlight((h) => (h - 1 + items.length) % items.length)
-    } else if (e.key === 'Enter') {
+      setActive((i) => (options.length ? (i - 1 + options.length) % options.length : -1))
+      return
+    }
+    if (e.key === 'Enter') {
       e.preventDefault()
-      if (open && highlight >= 0 && items[highlight]) router.push(`/anime/${items[highlight].id}`)
-      else submit(value)
-      setOpen(false)
-    } else if (e.key === 'Escape') {
-      setOpen(false)
+      const idx = active >= 0 ? options[active] : null
+      if (idx != null) {
+        goToAnime(idx)
+      } else {
+        commit(value)
+      }
     }
   }
 
   return (
-    <div ref={boxRef} className="relative w-full">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          submit(value)
-        }}
-        role="search"
-      >
-        <div className="relative">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M20 20l-3.5-3.5" />
-            </svg>
-          </span>
-          <input
-            type="search"
-            value={value}
-            autoFocus={autoFocus}
-            onChange={(e) => setValue(e.target.value)}
-            onFocus={() => items.length && setOpen(true)}
-            onKeyDown={onKeyDown}
-            placeholder={placeholder}
-            aria-label="Search anime"
-            className={[
-              'input pl-9 pr-9',
-              compact ? 'py-2 text-[13px]' : 'py-3 text-sm',
-            ].join(' ')}
-          />
-          {loading && (
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500">
-              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity=".25" />
-                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" />
-              </svg>
-            </span>
-          )}
-        </div>
-      </form>
+    <div ref={boxRef} className="relative">
+      <div className="relative">
+        <IconSearch
+          size={compact ? 15 : 16}
+          className={[
+            'pointer-events-none absolute top-1/2 -translate-y-1/2 text-zinc-500',
+            compact ? 'left-3' : 'left-3.5',
+          ].join(' ')}
+        />
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value)
+            setOpen(true)
+            setActive(-1)
+            onQueryChange(e.target.value)
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          placeholder="Search anime by title…"
+          autoFocus={autoFocus}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="search-suggestions"
+          aria-autocomplete="list"
+          className={[
+            'input w-full',
+            compact ? 'h-10 text-sm' : 'h-12 text-base',
+            compact ? 'pl-9 pr-[4.6rem]' : 'pl-11 pr-24',
+          ].join(' ')}
+        />
 
-      {suggestions && open && items.length > 0 && (
-        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-xl border border-white/10 bg-ink-850/98 shadow-2xl backdrop-blur-xl">
-          {items.map((s, i) => (
-            <button
-              key={s.id}
-              type="button"
-              onMouseEnter={() => setHighlight(i)}
-              onClick={() => {
-                setOpen(false)
-                router.push(`/anime/${s.id}`)
-              }}
-              className={[
-                'flex w-full items-center gap-3 px-3 py-2 text-left transition',
-                i === highlight ? 'bg-white/10' : 'hover:bg-white/5',
-              ].join(' ')}
-            >
-              <span className="h-12 w-8 shrink-0 overflow-hidden rounded bg-ink-700">
-                {s.poster ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={s.poster} alt="" className="h-full w-full object-cover" loading="lazy" />
-                ) : null}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-zinc-100">
-                  {s.title}
-                </span>
-                <span className="block truncate text-[11px] text-zinc-500">
-                  {[s.format?.replace(/_/g, ' '), s.year].filter(Boolean).join(' · ')}
-                </span>
-              </span>
-            </button>
-          ))}
+        {value && (
           <button
             type="button"
-            onClick={() => submit(value)}
-            className="w-full border-t border-white/5 px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-brand-soft hover:bg-white/5"
+            onClick={() => {
+              setValue('')
+              setSuggestions([])
+              onQueryChange('')
+              inputRef.current?.focus()
+            }}
+            aria-label="Clear search"
+            className={[
+              'btn-icon absolute top-1/2 -translate-y-1/2',
+              compact ? 'right-[4.1rem] h-6 w-6' : 'right-[4.6rem] h-8 w-8',
+            ].join(' ')}
           >
-            See all results for “{value.trim()}”
+            <IconClose size={16} />
           </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => commit(value)}
+          className={[
+            'absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg bg-accent font-semibold text-black transition hover:brightness-110',
+            compact ? 'h-7 px-2.5 text-[11px]' : 'h-8 px-3 text-xs',
+          ].join(' ')}
+        >
+          Search
+        </button>
+      </div>
+
+      {open && (showRecent || suggestions.length > 0) && (
+        <div
+          id="search-suggestions"
+          role="listbox"
+          className="absolute left-0 right-0 top-[calc(100%+0.4rem)] z-40 overflow-hidden rounded-xl border border-white/[0.09] bg-base-900/95 shadow-2xl backdrop-blur-xl animate-scale-in"
+        >
+          {showRecent && (
+            <div className="border-b border-white/[0.06] p-2">
+              <div className="flex items-center justify-between px-2 py-1">
+                <span className="font-mono text-[0.6rem] uppercase tracking-[0.16em] text-zinc-500">
+                  Recent
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearRecent()
+                    setRecent([])
+                  }}
+                  className="text-[0.65rem] text-zinc-500 transition hover:text-zinc-300"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5 px-1 pb-1">
+                {recent.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => commit(r)}
+                    className="rounded-md border border-white/[0.08] px-2.5 py-1 text-xs text-zinc-300 transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent-soft"
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {suggestions.length > 0 && (
+            <ul className="max-h-[22rem] overflow-y-auto p-1.5">
+              {suggestions.map((m, i) => (
+                <li key={m.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={i === active}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => goToAnime(m.id)}
+                    className={[
+                      'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition',
+                      i === active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.05]',
+                    ].join(' ')}
+                  >
+                    <span className="h-14 w-10 shrink-0 overflow-hidden rounded bg-base-750">
+                      {posterOf(m) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={posterOf(m)} alt="" className="h-full w-full object-cover" />
+                      ) : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 text-sm font-semibold text-zinc-100">{titleOf(m)}</span>
+                      <span className="mt-0.5 flex items-center gap-2 text-[10.5px] text-zinc-500">
+                        {m.format && <span>{formatLabel(m.format)}</span>}
+                        {m.seasonYear && <span>· {seasonLabel(m.season, m.seasonYear)}</span>}
+                        {scoreOf(m) != null && <span>· {scoreOf(m)}%</span>}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>
