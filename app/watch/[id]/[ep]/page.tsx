@@ -7,16 +7,17 @@ import { byId, stripHtml, titleOf, type Media } from '@/lib/anilist'
 export const revalidate = 600
 
 interface Params {
-  params: { id: string; ep: string }
+  params: Promise<{ id: string; ep: string }>
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const id = Number(params.id)
+  const { id: rawId, ep } = await params
+  const id = Number(rawId)
   if (!Number.isFinite(id)) return { title: 'Watch' }
   try {
     const m = await byId(id)
     return {
-      title: `Episode ${params.ep} — ${titleOf(m)}`,
+      title: `Episode ${ep} — ${titleOf(m)}`,
       description: stripHtml(m.description).slice(0, 160) || undefined,
     }
   } catch {
@@ -25,8 +26,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function WatchPage({ params }: Params) {
-  const id = Number(params.id)
-  const episode = Number(params.ep)
+  const { id: rawId, ep: rawEp } = await params
+  const id = Number(rawId)
+  const episode = Number(rawEp)
   if (!Number.isFinite(id) || id <= 0) notFound()
   if (!Number.isFinite(episode) || episode <= 0) notFound()
 

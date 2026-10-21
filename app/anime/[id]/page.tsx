@@ -21,11 +21,12 @@ import {
 export const revalidate = 600
 
 interface Params {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const id = Number(params.id)
+  const { id: rawId } = await params
+  const id = Number(rawId)
   if (!Number.isFinite(id)) return { title: 'Not found' }
   try {
     const m = await byId(id)
@@ -85,7 +86,8 @@ function RelationCard({ edge }: { edge: NonNullable<Media['relations']>['edges']
 }
 
 export default async function AnimeDetailPage({ params }: Params) {
-  const id = Number(params.id)
+  const { id: rawId } = await params
+  const id = Number(rawId)
   if (!Number.isFinite(id) || id <= 0) notFound()
 
   let media: Media

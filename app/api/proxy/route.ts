@@ -98,6 +98,21 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() })
 }
 
+/**
+ * The server binds to localhost inside the container, so `req.url` carries the
+ * internal origin. When the app is reached through a proxy or port-forward the
+ * rewritten playlist URIs must point at the origin the browser actually used,
+ * otherwise HLS resolves them against localhost and fails.
+ */
+function requestOrigin(req: NextRequest): string {
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  if (forwardedHost) {
+    const proto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() || 'https'
+    return `${proto}://${forwardedHost.split(',')[0].trim()}`
+  }
+  return new URL(req.url).origin
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const target = parseTarget(searchParams.get('url'))
@@ -160,7 +175,7 @@ export async function GET(req: NextRequest) {
   if (definitelyPlaylist) {
     const text = await upstream.text()
     if (text.trimStart().startsWith('#EXTM3U')) {
-      const body = rewritePlaylist(text, target, referer, new URL(req.url).origin, contentType)
+      const body = rewritePlaylist(text, target, referer, requestOrigin(req), contentType)
       return new Response(body, {
         status: 200,
         headers: corsHeaders({
@@ -194,7 +209,7 @@ export async function GET(req: NextRequest) {
         buf.toString('utf8'),
         target,
         referer,
-        new URL(req.url).origin,
+        requestOrigin(req),
         contentType,
       )
       return new Response(body, {

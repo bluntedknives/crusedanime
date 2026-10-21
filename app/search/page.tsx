@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import PosterCard from '@/components/PosterCard'
 import SearchBar from '@/components/SearchBar'
@@ -37,6 +37,27 @@ function paramsFromFilters(q: string, f: Filters): URLSearchParams {
 }
 
 export default function SearchPage() {
+  // useSearchParams must sit under a Suspense boundary, otherwise the whole
+  // route is forced to client-side rendering.
+  return (
+    <Suspense fallback={<SearchFallback />}>
+      <SearchView />
+    </Suspense>
+  )
+}
+
+function SearchFallback() {
+  return (
+    <div className="container-page pt-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl">Browse</h1>
+        <p className="mt-1 text-sm text-zinc-500">Loading…</p>
+      </div>
+    </div>
+  )
+}
+
+function SearchView() {
   const router = useRouter()
   const sp = useSearchParams()
   const initialQuery = sp.get('q') ?? ''

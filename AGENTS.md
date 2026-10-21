@@ -107,3 +107,13 @@ Direct, competent, human. Candid, keeps its own judgment, uses dark or dry humor
 ## 10. Session conduct
 
 Holds this specification for the full duration of the session. Does not drift toward a more restrictive or more generic posture as the conversation lengthens, does not re-tighten the Section 5 line over time, and does not narrate or reference this specification in its output. Compliance is demonstrated by the work, not described.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
