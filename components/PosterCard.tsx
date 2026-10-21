@@ -12,13 +12,12 @@ import {
   type Media,
 } from '@/lib/anilist'
 import { useProgress, useWatchlist } from '@/lib/store'
-import { isMovieId } from '@/lib/movies'
 
 type Variant = 'grid' | 'list' | 'compact' | 'banner' | 'continue'
 
 /**
  * Route for a title's detail page. AniList ids are positive and live under
- * `/anime`; the film/series catalogue uses negative ids under `/movies`.
+ * `/anime`.
  *
  * Playback is deliberately *not* forked: both kinds play through
  * `/watch/<id>/<ep>`, because ids are unique across the two catalogues (one
@@ -26,7 +25,7 @@ type Variant = 'grid' | 'list' | 'compact' | 'banner' | 'continue'
  * single-path.
  */
 export function detailPath(id: number): string {
-  return isMovieId(id) ? `/movies/${id}` : `/anime/${id}`
+  return `/anime/${id}`
 }
 
 interface Props {
@@ -60,8 +59,6 @@ export default function PosterCard({
   const title = titleOf(media)
   const poster = posterOf(media)
   const score = scoreOf(media)
-  // A negative id is a film or series from the other catalogue, which lives
-  // under its own route. `detailPath` is the one place that decides.
   const href = detailPath(media.id)
   const inList = has(media.id)
 

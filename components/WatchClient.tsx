@@ -7,7 +7,6 @@ import { IconArrowLeft, IconBookmark, IconBookmarkFilled, IconChevronLeft, IconC
 import Player, { type PlayerPayload } from './Player'
 import EpisodeList from './EpisodeList'
 import { detailPath } from './PosterCard'
-import EmbedPlayer from './EmbedPlayer'
 import { coverLabel } from '@/lib/cover'
 import type { EpisodeInfo } from '@/lib/consumet'
 import { useHistory, usePrefs, useProgress, useWatchlist } from '@/lib/store'
@@ -43,9 +42,6 @@ export default function WatchClient({
   const [payload, setPayload] = useState<PlayerPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // Set when the in-house resolver found nothing and a third-party player is the
-  // only way to watch. Distinct from `error`, which is a real failure.
-  const [useEmbed, setUseEmbed] = useState(false)
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>(initialEpisodes ?? [])
   const [epsLoading, setEpsLoading] = useState(!initialEpisodes)
   const [nonce, setNonce] = useState(0)
@@ -101,7 +97,6 @@ export default function WatchClient({
       setLoading(true)
       setError(null)
       setPayload(null)
-      setUseEmbed(false)
 
       const params = new URLSearchParams({
         anilistId: String(media.id),
@@ -120,17 +115,9 @@ export default function WatchClient({
         const data = await res.json()
         if (!res.ok) throw new Error(data?.error ?? `stream request failed (${res.status})`)
         if (data.unavailable || (Array.isArray(data.sources) && data.sources.length === 0)) {
-          // A licensed title with no public copy is not an error — it has a
-          // fallback. Anything else genuinely failed.
-          if (data.reason === 'no-public-source') {
-            setUseEmbed(true)
-            setError(null)
-          } else {
-            setError(data.reason || 'No playable source was found for this title.')
-          }
+          setError(data.reason || 'No playable source was found for this title.')
           return
         }
-        setUseEmbed(false)
         setPayload({
           provider: data.provider,
           sources: data.sources ?? [],
@@ -219,21 +206,7 @@ export default function WatchClient({
       >
         {/* ------------------------------------------------------ player col */}
         <div className="min-w-0">
-          {useEmbed ? (
-            <EmbedPlayer
-              media={media}
-              slot={{
-                // `listEpisodes` carries the provider's own season, so the
-                // embed addresses the same episode the viewer picked.
-                season: listEpisodes[episode - 1]?.season ?? 1,
-                episode: listEpisodes[episode - 1]?.number ?? episode,
-              }}
-              title={title}
-              poster={media.bannerImage || posterOf(media)}
-              covered={covered}
-            />
-          ) : (
-            <Player
+          <Player
               animeId={media.id}
               animeTitle={title}
               poster={media.bannerImage || posterOf(media)}
@@ -245,9 +218,8 @@ export default function WatchClient({
               error={error}
               onRetry={retry}
               theater={theater}
-              onTheaterChange={setTheater}
-            />
-          )}
+            onTheaterChange={setTheater}
+          />
 
           {/* Action row */}
           <div className="mt-3 flex flex-wrap items-center gap-2">

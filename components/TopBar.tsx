@@ -3,13 +3,12 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { IconBookmark, IconClose, IconFilm, IconFlame, IconHistory, IconMenu } from './icons'
+import { IconBookmark, IconClose, IconFlame, IconHistory, IconMenu } from './icons'
 import SearchBar from './SearchBar'
 import { coverLabel } from '@/lib/cover'
 import MobileNav from './MobileNav'
 
 const LINKS = [
-  { href: '/movies', label: 'Movies', icon: IconFilm },
   { href: '/trending', label: 'Trending', icon: IconFlame },
   { href: '/watchlist', label: 'Watchlist', icon: IconBookmark },
   { href: '/history', label: 'History', icon: IconHistory },
@@ -88,7 +87,6 @@ export default function TopBar({ covered = false }: { covered?: boolean }) {
               {[
                 { href: '/', label: 'Home' },
                 { href: '/search', label: 'Browse' },
-                { href: '/movies', label: 'Movies' },
                 { href: '/trending', label: 'Trending' },
                 { href: '/schedule', label: 'Schedule' },
                 { href: '/random', label: 'Random' },

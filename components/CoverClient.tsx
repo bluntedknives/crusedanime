@@ -77,14 +77,33 @@ export default function CoverClient() {
       if (next !== node.nodeValue) node.nodeValue = next
     }
 
+    /**
+     * Poster images carry the title in their `alt` text, which is a leak the
+     * text walker cannot see: it is an attribute, not a text node. The same
+     * applies to `title` and `aria-label`, which are read out by screen readers
+     * and by any crawler that does not run scripts.
+     */
+    const ATTRS = ['alt', 'title', 'aria-label'] as const
+    const rewriteAttrs = () => {
+      for (const el of document.querySelectorAll<HTMLElement>('[alt],[title],[aria-label]')) {
+        if (SKIP_TAGS.has(el.tagName) || !hydrated(el)) continue
+        for (const name of ATTRS) {
+          const value = el.getAttribute(name)
+          if (!value) continue
+          const next = declassifyText(value)
+          if (next !== value) el.setAttribute(name, next)
+        }
+      }
+    }
+
     const rewriteLinks = () => {
       for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href]')) {
         const href = a.getAttribute('href')
         if (!href) continue
         // Same hydration guard: a link React has not claimed yet is off limits.
         if (!hydrated(a)) continue
-        if (href.startsWith('/anime/') || href.startsWith('/movies/')) {
-          a.setAttribute('href', '/item/' + href.replace(/^\/(anime|movies)\//, ''))
+        if (href.startsWith('/anime/')) {
+          a.setAttribute('href', '/item/' + href.replace(/^\/anime\//, ''))
         } else if (href.startsWith('/watch/')) {
           a.setAttribute('href', '/view/' + href.slice(7))
         }
@@ -96,6 +115,8 @@ export default function CoverClient() {
       // The document title carries the current route's label; regenerate it.
       if (document.title) document.title = declassifyText(document.title)
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        // A text node's own `tagName` is undefined, so the parent is what gets
+        // tested here — the guard in `rewriteNode` then applies to the parent.
         acceptNode: (n) =>
           (n.nodeValue ?? '').trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
       })
@@ -103,6 +124,7 @@ export default function CoverClient() {
       let current: Node | null
       while ((current = walker.nextNode())) batch.push(current as Text)
       batch.forEach(rewriteNode)
+      rewriteAttrs()
       rewriteLinks()
     }
 

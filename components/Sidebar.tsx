@@ -9,7 +9,6 @@ import {
   IconBookmark,
   IconCalendar,
   IconCompass,
-  IconFilm,
   IconFlame,
   IconHistory,
   IconHome,
@@ -28,7 +27,6 @@ interface RailItem {
 const ITEMS: RailItem[] = [
   { href: '/', label: 'Home', icon: IconHome, exact: true },
   { href: '/search', label: 'Browse', icon: IconCompass },
-  { href: '/movies', label: 'Movies', icon: IconFilm },
   { href: '/trending', label: 'Trending', icon: IconFlame },
   { href: '/schedule', label: 'Schedule', icon: IconCalendar },
   { href: '/watchlist', label: 'Watchlist', icon: IconBookmark },

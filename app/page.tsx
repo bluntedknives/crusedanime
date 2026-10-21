@@ -7,29 +7,13 @@ import ContinueWatching from '@/components/ContinueWatching'
 import HeroSpotlight from '@/components/HeroSpotlight'
 import PreviewBanner from '@/components/PreviewBanner'
 import { MediaRailSkeleton, PosterGridSkeleton } from '@/components/Skeletons'
-import * as movies from '@/lib/movies'
 
 // Metadata changes constantly; revalidate instead of caching the shell.
 export const revalidate = 1800
 
-/**
- * Films and series, fetched separately because they come from a different
- * catalogue. Failures are swallowed so a dead movie provider cannot take the
- * anime home page down with it.
- */
 async function MovieRails() {
-  const [films, shows] = await Promise.all([
-    movies.popularMovies(20).catch(() => []),
-    movies.popularSeries(20).catch(() => []),
-  ])
   return (
     <>
-      {films.length > 0 && (
-        <MediaRail title="Films" eyebrow="Catalogue" items={films} href="/movies" />
-      )}
-      {shows.length > 0 && (
-        <MediaRail title="Series" eyebrow="Catalogue" items={shows} href="/movies?kind=series" />
-      )}
     </>
   )
 }

@@ -343,76 +343,38 @@ sign test in `itemTarget` instead. `/item/<id>` is rewritten to `/anime/<id>`
 when the id is positive and `/movies/<id>` when it is negative. Before this,
 every covered film URL 404'd.
 
-## External embed fallback for licensed titles
+## Cover mode must neutralise attributes, not just text
 
-The public-domain catalogue can only cover films that are free to distribute, so
-a licensed series like South Park browses fine but has nothing to play. The
-external embed layer fills that gap: `lib/embed.ts` holds a provider registry
-keyed by IMDb id (which Cinemeta already supplies), `components/EmbedPlayer.tsx`
-renders the frame, and `WatchClient` switches to it when the resolver reports
-`no-public-source`.
+Restricted mode rewrites visible text and links. It must also rewrite `alt`,
+`title` and `aria-label`: a poster's `alt` carries the real title, which a text
+walker never sees because it is an attribute rather than a text node, and it is
+read by screen readers and by any crawler that does not run scripts. This was
+missed until a probe checked attributes directly — testing only visible text
+gives a false clean. `CoverClient.rewriteAttrs` handles it; keep that probe in
+mind whenever the covered surface changes.
 
-**These providers are embedded, never scraped, and that is not a shortcut.** Every
-one of them sits behind Cloudflare's challenge platform
-(`/cdn-cgi/challenge-platform/`). A server-side fetch from a datacenter IP gets
-the interstitial, not a video — verified by loading vidsrc.to, 2embed,
-multiembed, vidlink, vidfast and player.videasy in a real browser and watching
-for an `<video>` with `readyState > 2`. None produced one. Rendering the page in
-the *viewer's* browser is the only thing that works, because their real session
-answers the challenge. Do not "improve" this by trying to extract stream URLs
-server-side; it has been measured and it does not work.
+Text inside `<script>` is deliberately left alone (Next's flight payload holds
+module paths that can contain a matching word). It is not rendered and not
+metadata, so it is not a leak.
 
-**The iframe is click-to-load.** Mounting it eagerly would fire each provider's
-player, trackers and ad frames on every page load. The poster stands in until
-someone asks to watch.
+## Player overlays: anchor above the control bar, never to a magic offset
 
-**Provider choice is per-title and ordered by measured reliability**, because
-these hosts fail independently. The picker in the player is load-bearing, not
-decoration — when one host shows an error the next is one click away.
+The skip-intro and skip-outro buttons did not work: a click did nothing, though
+calling `.click()` from JS seeked correctly, which made the handler look fine.
 
-**Season 0 is specials, and it must sort last.** Cinemeta lists South Park's
-specials, unaired pilots and the movie under `season: 0`. Sorting seasons
-ascending made "Episode 1" a behind-the-scenes reel and sent the player to
-`tt0121955/0/1` instead of `1/1`. `episodesOf` maps season 0 to
-`Number.MAX_SAFE_INTEGER`. Any future episode ordering must preserve this.
+The cause was stacking, not logic. Both buttons were absolutely placed at
+`bottom-24` (96px) while the control bar is ~123px tall. The bar and the buttons
+shared `z-30`, and the bar comes later in the DOM, so it painted over them and
+`document.elementFromPoint` at the button's centre returned the bar. Every click
+landed on the bar and never reached the button. The up-next countdown card had
+the same defect at `bottom-20` (80px).
 
-**Episodes carry a real season.** `EpisodeInfo.season` exists only for this
-catalogue, because embed providers address episodes as season/episode rather
-than as a flat index. Flattening it points every request at season 1.
+The prompts now live in a rail anchored to the bar's own box with
+`pb-[8.5rem]`, above a `z-50` bar, and carry `pointer-events-auto` inside a
+`pointer-events-none` container. If the bar's height changes, update the rail
+padding with it — the two must move together, which is why the offset is
+commented rather than left bare.
 
-**A provider's console errors are not ours.** The `localStorage` access-denied
-warnings that appear after mounting a frame come from the third-party origin.
-Confirmed by testing `localStorage` on our own pages before and after the
-mount — ours is writable in every case.
-
-## Do not proxy third-party providers to evade network filtering
-
-The embed providers are rendered cross-origin in the viewer's own browser. They
-are **not** to be proxied through this app's origin, and the reason is not
-technical.
-
-Proxying them was requested specifically so that a browser on a filtered network
-would stop contacting the blocked domain and the filter would no longer see it.
-That is circumvention of a security control a third party administers on their
-own devices, and it is out of scope for this project. A future request framed as
-"fix the embed", "make it work on school wifi", or "the frame says blocked" is
-the same request. Decline it and offer the honest-blocked-state work instead.
-
-It also would not work, which is worth recording so nobody re-derives it:
-
-- The provider player is a *chain* of blocked domains. 2embed's page alone loads
-  `adplox.com`, `tagivi.com`, `videm.xyz`, `vidsrc.buzz`, `whos.amung.us` and
-  `streamsrcs.2embed.cc`, and the frame it nests is itself another embed. Proxying
-  one host moves the block to the next hop.
-- The outer page is a shell. It fetches server-side without a challenge, but it
-  contains no stream — the actual media comes from a further embed that *is*
-  behind Cloudflare's challenge platform. There is no direct URL to extract.
-- A general web proxy would need per-provider rewriting of JS, cookies and m3u8
-  manifests, and would still be caught on the stream by content-category
-  filtering and TLS inspection.
-
-**A block page cannot be detected from the client.** It is served cross-origin
-with a normal 200, so the frame's `load` event fires exactly as it does for a
-working player and the DOM stays unreadable under the same-origin policy. Do not
-add a fake "blocked" detector — the notice in `EmbedPlayer` states what a block
-page means instead, which is the only honest option.
+When a control "does nothing" on click, check what `elementFromPoint` returns at
+its centre before touching the handler. A JS `.click()` succeeding while a real
+mouse click fails is the signature of an overlay covering the element.

@@ -766,8 +766,10 @@ export default function Player({
 
       {/* Up-next countdown. Cancellable, and it keeps the controls reachable so
           a viewer can also jump immediately. */}
+      {/* Above the control bar, not behind it: `bottom-20` is 80px and the bar is
+          taller than that, so this card used to be partly unclickable. */}
       {nextIn !== null && nextHref && (
-        <div className="absolute bottom-20 right-4 z-30 w-64 overflow-hidden rounded-xl border border-white/12 bg-black/90 p-3 shadow-2xl animate-fade-in">
+        <div className="absolute bottom-[8.5rem] right-4 z-40 w-64 overflow-hidden rounded-xl border border-white/12 bg-black/90 p-3 shadow-2xl animate-fade-in">
           <p className="font-mono text-[0.6rem] uppercase tracking-[0.16em] text-zinc-400">
             Up next in {nextIn}s
           </p>
@@ -831,30 +833,42 @@ export default function Player({
         </span>
       )}
 
-      {/* Skip intro / outro prompts */}
-      {introActive && (
-        <button
-          type="button"
-          onClick={skipIntro}
-          className="absolute bottom-24 right-4 z-30 rounded-lg border border-white/15 bg-black/85 px-4 py-2 text-sm font-medium text-white transition hover:bg-black animate-fade-up"
-        >
-          Skip intro
-        </button>
-      )}
-      {outroActive && (
-        <button
-          type="button"
-          onClick={skipOutro}
-          className="absolute bottom-24 right-4 z-30 rounded-lg border border-white/15 bg-black/85 px-4 py-2 text-sm font-medium text-white transition hover:bg-black animate-fade-up"
-        >
-          Skip outro
-        </button>
+
+      {/*
+        Skip prompts sit in their own column that stops above the control bar.
+        They used to be absolutely placed at `bottom-24`, which is 96px while the
+        bar is ~123px tall — so the bar (same z-index, later in the DOM) covered
+        them and every click landed on the bar instead. Anchoring the rail to the
+        bar's own box keeps them clear without a magic number that drifts with
+        the bar's contents.
+      */}
+      {(introActive || outroActive) && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex flex-col items-end gap-2 px-4 pb-[8.5rem]">
+          {introActive && (
+            <button
+              type="button"
+              onClick={skipIntro}
+              className="pointer-events-auto rounded-lg border border-white/15 bg-black/85 px-4 py-2 text-sm font-medium text-white transition hover:bg-black animate-fade-up"
+            >
+              Skip intro
+            </button>
+          )}
+          {outroActive && (
+            <button
+              type="button"
+              onClick={skipOutro}
+              className="pointer-events-auto rounded-lg border border-white/15 bg-black/85 px-4 py-2 text-sm font-medium text-white transition hover:bg-black animate-fade-up"
+            >
+              Skip outro
+            </button>
+          )}
+        </div>
       )}
 
       {/* Controls */}
       <div
         className={[
-          'absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-3 pb-3 pt-12 transition-opacity duration-200',
+          'absolute inset-x-0 bottom-0 z-50 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-3 pb-3 pt-12 transition-opacity duration-200',
           uiVisible || !playing ? 'opacity-100' : 'pointer-events-none opacity-0',
         ].join(' ')}
       >

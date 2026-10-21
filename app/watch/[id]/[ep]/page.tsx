@@ -6,8 +6,6 @@ import * as data from '@/lib/data'
 import { stripHtml, titleOf, type Media } from '@/lib/anilist'
 import { isCovered } from '@/lib/coverServer'
 import { coverTitle } from '@/lib/cover'
-import * as movies from '@/lib/movies'
-import type { EpisodeInfo } from '@/lib/consumet'
 
 export const revalidate = 600
 
@@ -20,10 +18,6 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const id = Number(rawId)
   if (!Number.isFinite(id)) return { title: 'Watch' }
   const covered = await isCovered()
-  if (movies.isMovieId(id)) {
-    const d = await movies.detail(id)
-    return { title: coverTitle(d?.name, covered) }
-  }
   try {
     const { data: m } = await data.byId(id)
     if (!m) return { title: 'Watch' }
@@ -44,61 +38,10 @@ export default async function WatchPage({ params }: Params) {
   if (!Number.isFinite(id)) notFound()
   if (!Number.isFinite(episode) || episode <= 0) notFound()
 
-  let media: Media
-  /**
-   * Films and series come from the other catalogue, which has no provider
-   * episode list. Their episodes are derived from Cinemeta's `videos`, and a
-   * film is a single episode, so the list is supplied up front rather than
-   * fetched — the client would otherwise ask the anime provider for it.
-   */
-  let initialEpisodes: EpisodeInfo[] | undefined
-
-  if (movies.isMovieId(id)) {
-    const detail = await movies.detail(id)
-    if (!detail) notFound()
-    media = movies.adapt(detail)
-
-    const listed = movies.episodesOf(detail)
-    initialEpisodes = listed.length
-      ? listed.map((e, i) => ({
-          number: i + 1,
-          // Keep the provider's own numbering: the embed fallback addresses
-          // episodes as season/episode, so flattening this would point every
-          // request at season 1.
-          season: e.season ?? 1,
-          id: e.id,
-          title: e.name ?? `Episode ${i + 1}`,
-          image: e.thumbnail ?? null,
-          description: e.overview ?? null,
-          filler: false,
-          hasSub: false,
-          hasDub: false,
-          ani: '',
-          mal: '',
-          embedId: e.id,
-        }))
-      : [
-          {
-            number: 1,
-            id: `${id}-1`,
-            title: detail.name,
-            image: detail.poster ?? null,
-            description: detail.description ?? null,
-            filler: false,
-            hasSub: false,
-            hasDub: false,
-            ani: '',
-            mal: '',
-            embedId: `${id}-1`,
-          },
-        ]
-    if (episode > initialEpisodes.length) notFound()
-  } else {
-    if (id <= 0) notFound()
-    const res = await data.byId(id)
-    if (!res.data) notFound()
-    media = res.data
-  }
+  if (id <= 0) notFound()
+  const res = await data.byId(id)
+  if (!res.data) notFound()
+  const media: Media = res.data
 
   const altTitles = [
     media.title.english,
@@ -123,7 +66,6 @@ export default async function WatchPage({ params }: Params) {
         episode={episode}
         altTitles={altTitles}
         covered={covered}
-        initialEpisodes={initialEpisodes}
       />
     </Suspense>
   )

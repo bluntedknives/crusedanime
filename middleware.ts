@@ -9,18 +9,15 @@ import { COVER_COOKIE, ITEM_PATH, VIEWER_PATH } from './lib/cover'
  * carry a content-bearing path.
  *
  * Two prefix pairs are in play and must not be confused:
- *   - `/item/*`, `/view/*`              the *covered* prefixes the browser asks for
- *   - `/anime/*`, `/movies/*`, `/watch/*`  the real routes that render the page
+ *   - `/item/*`, `/view/*`   the *covered* prefixes the browser asks for
+ *   - `/anime/*`, `/watch/*` the real routes that render the page
  *
  * A covered prefix is rewritten onto its real route (internal, so the route
  * handlers are untouched). A direct hit on a real route is redirected to its
  * covered prefix, so the exposed path never renders.
  *
- * The catalogue is recovered from the id's sign: AniList ids are positive and
- * live under `/anime`, the film/series catalogue uses negative ids under
- * `/movies`. That is the same rule `isMovieId` applies in the app, restated here
- * because middleware runs on the edge and must not pull in the fetch-heavy
- * catalogue modules.
+ * Every title now belongs to the single AniList catalogue, so a covered item
+ * rewrites to `/anime/<id>` without inspecting the id.
  */
 const COVERED_ITEM_RE = /^\/item\//
 const COVERED_VIEWER_RE = /^\/view\//
@@ -70,5 +67,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/anime/:path*', '/movies/:path*', '/watch/:path*', '/item/:path*', '/view/:path*'],
+  matcher: ['/anime/:path*', '/watch/:path*', '/item/:path*', '/view/:path*'],
 }

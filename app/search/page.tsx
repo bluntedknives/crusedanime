@@ -50,12 +50,6 @@ function SearchView() {
   const [debouncedQ, setDebouncedQ] = useState(initialQ)
   const [filters, setFilters] = useState<FilterState>(() => queryToFilters(sp))
   const [results, setResults] = useState<Media[]>([])
-  /**
-   * Films and series live in a second catalogue, so they are fetched alongside
-   * the anime results and appended. Without this, searching "South Park" would
-   * return nothing at all — the anime catalogue has never heard of it.
-   */
-  const [movies, setMovies] = useState<Media[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [hasNext, setHasNext] = useState(false)
@@ -83,27 +77,6 @@ function SearchView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQ, filters])
 
-  /**
-   * Films/series search runs on the same debounce and only on page 1.
-   *
-   * It is suppressed while any filter is active. The filter set (season, format,
-   * status, studio, AniList score ramp) describes anime and has no equivalent
-   * here, so honouring it is impossible and ignoring it would show results that
-   * contradict the filters the viewer just set.
-   */
-  const filtersActive = useMemo(() => activeFilterCount(filters) > 0, [filters])
-  useEffect(() => {
-    if (!debouncedQ || filtersActive) {
-      setMovies([])
-      return
-    }
-    const ctrl = new AbortController()
-    fetch(`/api/movies?q=${encodeURIComponent(debouncedQ)}&limit=12`, { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((d) => setMovies(Array.isArray(d?.results) ? d.results : []))
-      .catch(() => {})
-    return () => ctrl.abort()
-  }, [debouncedQ, filtersActive])
 
   const load = useCallback(
     async (targetPage: number, signal: AbortSignal) => {
@@ -144,12 +117,6 @@ function SearchView() {
 
   const filterCount = useMemo(() => activeFilterCount(filters), [filters])
 
-  /**
-   * Both catalogues in one list. They used to render as two separate blocks,
-   * which meant a search could look empty even when it had matched — the second
-   * block sat below the fold and the empty-state only consulted the first.
-   */
-  const all = useMemo(() => [...results, ...movies], [results, movies])
 
   return (
     <div className="container-page pt-5">
@@ -208,9 +175,9 @@ function SearchView() {
             <div className="surface mb-4 p-4 text-sm text-red-300">{error}</div>
           )}
 
-          {loading && all.length === 0 ? (
+          {loading && results.length === 0 ? (
             mode === 'grid' ? <PosterGridSkeleton /> : <ListSkeleton />
-          ) : all.length === 0 ? (
+          ) : results.length === 0 ? (
             <div className="surface grid place-items-center p-12 text-center">
               <p className="text-sm text-zinc-400">Nothing matched those filters.</p>
               <button
@@ -226,13 +193,13 @@ function SearchView() {
             </div>
           ) : mode === 'grid' ? (
             <div className="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
-              {all.map((m) => (
+              {results.map((m) => (
                 <PosterCard key={m.id} media={m} />
               ))}
             </div>
           ) : (
             <div className="space-y-3">
-              {all.map((m) => (
+              {results.map((m) => (
                 <PosterCard key={m.id} media={m} variant="list" />
               ))}
             </div>

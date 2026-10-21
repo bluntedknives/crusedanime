@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { providerHealth, resolveStream, type ResolveStreamInput } from '@/lib/consumet'
 import { encodeTarget } from '@/lib/cover'
-import * as movies from '@/lib/movies'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,42 +24,6 @@ export async function GET(req: NextRequest) {
   const episode = Number(p.get('episode'))
   const title = p.get('title') ?? ''
   const type = p.get('type') === 'dub' ? 'dub' : 'sub'
-
-  // A negative id is a film or series from the movie catalogue, which resolves
-  // through a different provider entirely. Branching here keeps the client
-  // contract identical, so the player needs no knowledge of the difference.
-  if (movies.isMovieId(anilistId)) {
-    if (!title) return NextResponse.json({ error: 'title is required' }, { status: 400 })
-    const year = Number(p.get('year'))
-    try {
-      const hit = await movies.sourceFor(anilistId, title, Number.isFinite(year) ? year : null)
-      if (!hit) {
-        return NextResponse.json({
-          unavailable: true,
-          reason: 'no-public-source',
-          sources: [],
-          subtitles: [],
-          headers: {},
-        })
-      }
-      const proxied = `/api/proxy?t=${encodeTarget(hit.source.url)}`
-      return NextResponse.json({
-        provider: 'archive',
-        sources: [{ url: proxied, quality: 'auto', isM3U8: hit.source.kind === 'm3u8' }],
-        subtitles: [],
-        headers: {},
-        // Native MP4 needs no HLS shim; the client reads this to pick a path.
-        native: hit.source.kind === 'mp4',
-        intro: null,
-        outro: null,
-      })
-    } catch (err) {
-      return NextResponse.json(
-        { unavailable: true, reason: err instanceof Error ? err.message : 'resolve failed', sources: [] },
-        { status: 200 },
-      )
-    }
-  }
 
   if (!Number.isFinite(anilistId) || anilistId <= 0) {
     return NextResponse.json({ error: 'anilistId is required' }, { status: 400 })
