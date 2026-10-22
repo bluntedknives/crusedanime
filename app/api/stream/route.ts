@@ -12,6 +12,19 @@ export const maxDuration = 120
  * Query: anilistId, title, episode, [malId], [alt], [type=sub|dub]
  * `?health=1` instead probes every provider and reports reachability.
  */
+/** True when the proxied source actually serves a manifest from this egress. */
+async function playable(path: string, req: NextRequest): Promise<boolean> {
+  try {
+    const res = await fetch(new URL(path, req.nextUrl.origin), {
+      signal: AbortSignal.timeout(6000),
+    })
+    if (!res.ok) return false
+    return (await res.text()).slice(0, 2048).includes('#EXTM3U')
+  } catch {
+    return false
+  }
+}
+
 export async function GET(req: NextRequest) {
   const p = new URL(req.url).searchParams
 
@@ -84,16 +97,26 @@ export async function GET(req: NextRequest) {
      *
      * `embedUrl` is the provider's own player page. The browser fetches it
      * directly, so mint and fetch share one IP and it works anywhere, at the
-     * cost of a cross-origin frame the app cannot instrument. The client falls
-     * back to it when the proxied source fails.
+     * cost of a cross-origin frame the app cannot instrument.
+     *
+     * Where the proxy cannot serve the manifest — the usual case on serverless,
+     * since minting and fetching land on different egress IPs — drop the
+     * sources so the client opens the embed immediately. Otherwise it waits for
+     * hls.js to exhaust its retries, which is the "keeps loading" symptom.
      */
+    const sources = payload.sources.map((s) => ({ ...s, url: proxy(s.url) }))
+    let usable = sources
+    if (payload.embedUrl && sources.length) {
+      if (!(await playable(sources[0].url, req))) usable = []
+    }
+
     return NextResponse.json({
       provider: payload.provider,
       embedUrl: payload.embedUrl ?? null,
-      sources: payload.sources.map((s) => ({ ...s, url: proxy(s.url) })),
+      sources: usable,
       /** Raw urls kept server-side only for debugging via ?raw=1. */
       rawSources: p.get('raw') ? payload.sources : undefined,
-      subtitles: payload.subtitles.map((s) => ({ ...s, url: proxy(s.url) })),
+      subtitles: usable.length ? payload.subtitles.map((s) => ({ ...s, url: proxy(s.url) })) : [],
       headers: payload.headers,
       intro: payload.intro ?? null,
       outro: payload.outro ?? null,
