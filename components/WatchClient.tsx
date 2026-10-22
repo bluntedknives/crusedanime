@@ -114,7 +114,13 @@ export default function WatchClient({
         const res = await fetch(`/api/stream?${params.toString()}`, { signal })
         const data = await res.json()
         if (!res.ok) throw new Error(data?.error ?? `stream request failed (${res.status})`)
-        if (data.unavailable || (Array.isArray(data.sources) && data.sources.length === 0)) {
+        // An embed-only payload has no sources by design: the provider's own
+        // page does the fetching, so an empty `sources` list is not a failure.
+        if (data.unavailable) {
+          setError(data.reason || 'No playable source was found for this title.')
+          return
+        }
+        if (!data.embedUrl && Array.isArray(data.sources) && data.sources.length === 0) {
           setError(data.reason || 'No playable source was found for this title.')
           return
         }
@@ -124,6 +130,7 @@ export default function WatchClient({
           subtitles: data.subtitles ?? [],
           intro: data.intro ?? null,
           outro: data.outro ?? null,
+          embedUrl: data.embedUrl ?? null,
         })
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
@@ -142,9 +149,11 @@ export default function WatchClient({
     return () => ctrl.abort()
   }, [loadStream])
 
-  // Record the view once a stream actually resolves.
+  // Record the view once a stream actually resolves. An embed payload carries
+  // no sources, so `embedUrl` counts as resolved too.
   useEffect(() => {
-    if (!payload?.sources?.length) return
+    if (!payload) return
+    if (!payload.embedUrl && !payload.sources?.length) return
     record({
       animeId: media.id,
       episode,
@@ -219,6 +228,7 @@ export default function WatchClient({
               onRetry={retry}
               theater={theater}
             onTheaterChange={setTheater}
+            onFatalError={setError}
           />
 
           {/* Action row */}

@@ -74,8 +74,22 @@ export async function GET(req: NextRequest) {
     // host in the URL, where an extension can read it.
     const proxy = (u: string) => `/api/proxy?t=${encodeTarget(u, payload.headers.Referer ?? '')}`
 
+    /*
+     * Both playback paths are returned and the client picks.
+     *
+     * `sources` go through this app's proxy, which is the better experience —
+     * native controls, subtitle tracks, intro/outro skipping — but only works
+     * where the server keeps one egress IP, because the CDN signs every URL
+     * against the address that requested it.
+     *
+     * `embedUrl` is the provider's own player page. The browser fetches it
+     * directly, so mint and fetch share one IP and it works anywhere, at the
+     * cost of a cross-origin frame the app cannot instrument. The client falls
+     * back to it when the proxied source fails.
+     */
     return NextResponse.json({
       provider: payload.provider,
+      embedUrl: payload.embedUrl ?? null,
       sources: payload.sources.map((s) => ({ ...s, url: proxy(s.url) })),
       /** Raw urls kept server-side only for debugging via ?raw=1. */
       rawSources: p.get('raw') ? payload.sources : undefined,

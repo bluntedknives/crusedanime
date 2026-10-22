@@ -44,6 +44,15 @@ export interface StreamPayload {
   provider: string
   intro?: { start: number; end: number } | null
   outro?: { start: number; end: number } | null
+  /**
+   * The provider's own player page for this episode.
+   *
+   * Signed CDN URLs are bound to the IP that minted them, so they only work
+   * when mint and fetch happen from one address. A serverless proxy cannot
+   * guarantee that, but the viewer's browser can — pointing an iframe here
+   * keeps the whole chain on a single client IP.
+   */
+  embedUrl?: string | null
 }
 
 export interface EpisodeInfo {
@@ -76,6 +85,12 @@ export interface ResolvedAnime {
 }
 
 export class StreamError extends Error {
+  /**
+   * Player page that can still be used when resolution fails, so a failed
+   * manifest fetch degrades to an embedded player rather than a dead end.
+   */
+  embedUrl?: string | null
+
   constructor(
     message: string,
     readonly provider?: string,
@@ -496,10 +511,14 @@ async function zSourcesForEpisode(
   if (!list.length) throw new StreamError(`no ${type} servers offered`, 'zangetsu')
 
   let lastErr: unknown
+  let lastEmbed: string | null = null
   for (const server of list) {
     if (remainingMs(deadline) <= 0) break
     const embed = zEmbedUrl(server.serverName, ep, type)
     if (!embed) continue
+    // Remember the best-ranked player page even if the manifest is unreachable:
+    // it is still directly playable in the viewer's browser.
+    if (!lastEmbed) lastEmbed = embed
     const base = new URL(embed).origin
 
     try {
@@ -551,15 +570,18 @@ async function zSourcesForEpisode(
         provider: `zangetsu:${server.serverName}`,
         intro: normaliseMark(manifest.intro),
         outro: normaliseMark(manifest.outro),
+        embedUrl: embed,
       }
     } catch (err) {
       lastErr = err
     }
   }
 
-  throw lastErr instanceof Error
-    ? lastErr
-    : new StreamError('every server failed for this episode', 'zangetsu')
+  const message =
+    lastErr instanceof Error ? lastErr.message : 'every server failed for this episode'
+  const err = new StreamError(message, 'zangetsu')
+  err.embedUrl = lastEmbed
+  throw err
 }
 
 /* ------------------------------------------------ provider: consumet mirrors */
@@ -640,6 +662,8 @@ export async function resolveStream(input: ResolveStreamInput): Promise<StreamPa
   return cached(key, 15 * 60_000, async () => {
     const errors: string[] = []
     const deadline = Date.now() + RESOLVE_BUDGET_MS
+    /** Player page to fall back to if nothing here produces a playable file. */
+    let fallbackEmbed: string | null = null
 
     try {
       const resolved = await resolveAnime({ ...input, deadline })
@@ -651,6 +675,7 @@ export async function resolveStream(input: ResolveStreamInput): Promise<StreamPa
       const session = await zSession(resolved.slug, deadline)
       return await zSourcesForEpisode(ep, type, resolved.slug, session, deadline)
     } catch (err) {
+      if (err instanceof StreamError && err.embedUrl) fallbackEmbed = err.embedUrl
       errors.push(err instanceof Error ? err.message : String(err))
     }
 
@@ -662,6 +687,19 @@ export async function resolveStream(input: ResolveStreamInput): Promise<StreamPa
         errors.push(err instanceof Error ? err.message : String(err))
       }
       await sleep(150)
+    }
+
+    // Nothing resolvable server-side. The provider's own player page still
+    // works, because the browser performs the whole signed-URL exchange from a
+    // single address — which the serverless proxy cannot do.
+    if (fallbackEmbed) {
+      return {
+        sources: [],
+        subtitles: [],
+        headers: {},
+        provider: 'zangetsu:embed',
+        embedUrl: fallbackEmbed,
+      }
     }
 
     throw new StreamError(`all providers failed: ${errors.slice(0, 4).join(' | ')}`)

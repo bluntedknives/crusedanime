@@ -40,6 +40,13 @@ export interface PlayerPayload {
   subtitles: PlayerSubtitle[]
   intro?: { start: number; end: number } | null
   outro?: { start: number; end: number } | null
+  /**
+   * Provider player page. When set, the player embeds it instead of driving a
+   * <video> element, because the signed stream URLs only resolve for the IP
+   * that minted them and the viewer's browser is the one address that can do
+   * both halves of that exchange.
+   */
+  embedUrl?: string | null
 }
 
 interface Props {
@@ -53,6 +60,8 @@ interface Props {
   loading: boolean
   error: string | null
   onRetry?: () => void
+  /** Reports an unrecoverable playback failure so the page can show it. */
+  onFatalError?: (message: string) => void
   /** Theater mode widens the player and hides the side column. */
   theater?: boolean
   onTheaterChange?: (next: boolean) => void
@@ -120,6 +129,7 @@ export default function Player({
   loading,
   error,
   onRetry,
+  onFatalError,
   theater = false,
   onTheaterChange,
 }: Props) {
@@ -127,6 +137,13 @@ export default function Player({
   const videoRef = useRef<HTMLVideoElement>(null)
   const shellRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  /** Fatal network retries spent for the current source, so the loop is bounded. */
+  const networkRetries = useRef(0)
+  /**
+   * Set when the proxied source fails unrecoverably, to switch to the
+   * provider's own player page. Reset whenever the episode or source changes.
+   */
+  const [embedFallback, setEmbedFallback] = useState(false)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { save, get } = useProgress()
   const { prefs, update } = usePrefs()
@@ -180,6 +197,35 @@ export default function Player({
       /2160|4k/i.test(q) ? 4 : /1080/i.test(q) ? 3 : /720/i.test(q) ? 2 : /480/i.test(q) ? 1 : 0
     return [...payload.sources].sort((a, b) => rank(b.quality) - rank(a.quality))[0]
   }, [payload])
+
+  /**
+   * Probe the proxied source before handing it to hls.js.
+   *
+   * hls.js treats a rejected manifest as a retryable network error, so letting
+   * it discover the failure costs several timed retries of spinner. A single
+   * request answers the same question immediately, which is what makes the
+   * switch to the embedded player feel instant instead of broken.
+   */
+  useEffect(() => {
+    if (!payload?.embedUrl || !activeSource?.url) return
+    const ctrl = new AbortController()
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(activeSource.url, { signal: ctrl.signal })
+        // Consume/cancel the body: only the status matters here, and a playlist
+        // is small enough that leaving it unread would leak a connection.
+        await res.body?.cancel().catch(() => {})
+        if (!res.ok && !cancelled) setEmbedFallback(true)
+      } catch {
+        // Network failure or abort; hls.js gets its own attempt either way.
+      }
+    })()
+    return () => {
+      cancelled = true
+      ctrl.abort()
+    }
+  }, [payload?.embedUrl, activeSource?.url])
 
   const flash = useCallback((msg: string, ms = 1600) => {
     setToast(msg)
@@ -241,6 +287,7 @@ export default function Player({
     setLevels([])
     setCurrentLevel(-1)
     setResumed(false)
+    networkRetries.current = 0
 
     if (hlsRef.current) {
       hlsRef.current.destroy()
@@ -301,18 +348,38 @@ export default function Player({
 
     hls.on(Hls.Events.ERROR, (_evt, data) => {
       if (!data.fatal) return
-      switch (data.type) {
-        case Hls.ErrorTypes.NETWORK_ERROR:
+      // Retrying a fatal network error forever is what turned an upstream 400
+      // into an endless spinner: `startLoad()` re-requests the same rejected
+      // URL and the UI never hears about it. Give it one retry, then switch to
+      // the provider's own player, which fetches from the viewer's IP and so
+      // is not subject to the rejection. Only report an error if there is no
+      // embed to fall back to.
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        networkRetries.current += 1
+        if (networkRetries.current <= 1) {
           hls.startLoad()
-          break
-        case Hls.ErrorTypes.MEDIA_ERROR:
-          hls.recoverMediaError()
-          break
-        default:
-          hls.destroy()
-          hlsRef.current = null
-          break
+          return
+        }
+        hls.destroy()
+        hlsRef.current = null
+        if (payload?.embedUrl) {
+          setEmbedFallback(true)
+          return
+        }
+        onFatalError?.('This episode could not be played — the stream source refused the request.')
+        return
       }
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        hls.recoverMediaError()
+        return
+      }
+      hls.destroy()
+      hlsRef.current = null
+      if (payload?.embedUrl) {
+        setEmbedFallback(true)
+        return
+      }
+      onFatalError?.('This episode could not be played.')
     })
 
     hls.loadSource(src)
@@ -322,7 +389,13 @@ export default function Player({
       hls.destroy()
       hlsRef.current = null
     }
-  }, [activeSource, videoEl])
+  }, [activeSource, videoEl, payload?.embedUrl])
+
+  // A new episode or source gets a fresh attempt at the native player before
+  // falling back, so one bad episode does not pin the whole session to a frame.
+  useEffect(() => {
+    setEmbedFallback(false)
+  }, [episode, activeSource?.url])
 
   // Resume from the stored position once metadata is known.
   useEffect(() => {
@@ -686,6 +759,74 @@ export default function Player({
   const pct = duration ? (time / duration) * 100 : 0
 
   /* ------------------------------------------------------------- render */
+
+  /*
+   * Embedded player.
+   *
+   * The upstream CDN signs every playlist and segment URL against the address
+   * that requested it. A serverless proxy mints on one request and fetches on
+   * another, from a different egress IP, so the CDN rejects it with 400 — which
+   * is what made playback hang. The provider's own page, loaded in an iframe,
+   * does the whole exchange from the viewer's single client IP, so it works
+   * where the proxy cannot.
+   *
+   * This is the fallback rather than the default: a cross-origin frame gives up
+   * native controls, subtitle tracks and intro/outro skipping, so it is only
+   * used when the proxied source cannot play.
+   */
+  if (payload?.embedUrl && (embedFallback || !activeSource)) {
+    return (
+      <div
+        ref={shellRef}
+        className={[
+          'group/shell relative mx-auto overflow-hidden rounded-[var(--radius-xl)] border border-white/[0.06] bg-black',
+          theater
+            ? 'w-full max-w-[min(100%,calc((100vh-9rem)*1.7778))]'
+            : 'w-full max-w-[min(100%,calc(100dvh-16rem))] lg:max-w-[min(100%,calc((100dvh-7.9rem)*1.7778))]',
+        ].join(' ')}
+      >
+        <iframe
+          src={payload.embedUrl}
+          title={animeTitle}
+          className="aspect-video w-full bg-black"
+          allowFullScreen
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          // The provider page checks the Referer, so send the origin rather
+          // than nothing. `no-referrer` makes the embed 404.
+          referrerPolicy="origin"
+        />
+        {/* The frame is cross-origin, so its own control bar is out of reach.
+            These are the episode-level controls that still work. */}
+        <div className="flex items-center justify-between gap-2 border-t border-white/[0.06] px-3 py-2">
+          <p className="font-mono text-[0.6rem] uppercase tracking-[0.16em] text-zinc-500">
+            Episode {episode}
+            {payload.provider ? ` · ${payload.provider.replace(':embed', '')}` : ''}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleTheater}
+              className="btn-ghost h-8 px-2.5 text-[11px]"
+              title="Toggle theater mode"
+            >
+              <IconTheater size={14} />
+            </button>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="btn-ghost h-8 px-2.5 text-[11px]"
+                title="Reload the player"
+              >
+                <IconRefresh size={14} />
+                Reload
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) {
     return (
