@@ -480,11 +480,14 @@ Auth is a dedicated ed25519 deploy key, scoped to this one repo. It lives on the
 **persistent** volume, not in `~`:
 
 - private key: `/workspace/.ssh/id_ed25519_github` (mode 600)
+- backup key: `/workspace/.secrets/id_ed25519_github.bak` (mode 600, dir 700)
 - public key: `/workspace/.ssh/id_ed25519_github.pub`
 - notes: `/workspace/GITHUB_SSH_NOTES.md`
 - bootstrap: `bash /workspace/bootstrap_push.sh`
 
 The public key is registered on the repo as a deploy key **with write access**.
+Neither the key nor the backup is inside the git repo, so neither can be pushed
+by accident; keep it that way.
 
 ### Filesystem persistence decides where secrets go
 
