@@ -420,6 +420,54 @@ Verified with Playwright: one click opens exactly one tab, navigation still
 completes, drag-select is skipped, ctrl/middle click are skipped, and the arm
 delay, cooldown, session cap and opt-out all suppress correctly.
 
+## Stream URLs are bound to the requesting IP
+
+The upstream CDN signs every playlist **and every segment** URL against the IP
+that requested it. That is the single most important fact about playback here,
+and it invalidates the obvious design.
+
+What goes wrong on serverless: `/api/stream` mints a token on one request, then
+`/api/proxy` fetches it on a *different* request. Vercel does not guarantee one
+egress IP across two functions, so the CDN answers `400 "Missing url"` and the
+proxy returns `502`. hls.js classifies that as a retryable `NETWORK_ERROR`, calls
+`startLoad()` on the same rejected URL, and the player spins forever.
+
+Measured on the live deployment:
+
+- `/api/proxy` → 502; upstream → 400, independent of `Referer`.
+- A token minted from one IP returns 200 from that IP, and fails **12/12**
+  through Vercel.
+- Warm lambdas *do* keep one IP (8/8 samples identical), so the fault is
+  specifically that the two functions do not share one — not that Vercel is
+  inherently unusable.
+
+The fix is to let the **browser** do the whole exchange. `resolveStream` returns
+`embedUrl`, the provider's own player page, and `Player` renders it in an iframe.
+Mint and fetch then happen on the viewer's single client IP, which the CDN
+accepts. Verified playing: `readyState 4`, `currentTime 11.9s`, `buffered 36.5s`.
+
+Both paths are returned and the client chooses:
+
+- **Native** (proxied `sources`) is preferred — native controls, subtitle
+  tracks, intro/outro skipping. Works wherever the server keeps one egress IP,
+  including a long-lived container or a VM.
+- **Embed** (`embedUrl`) is the fallback. A cross-origin frame gives up
+  everything above, but it plays where the proxy cannot.
+
+`Player` probes the proxied manifest once before handing it to hls.js, so the
+switch is immediate rather than several timed retries of spinner. Fatal network
+retries are bounded; if there is no embed to fall back to, a real error is shown
+instead of an endless loop.
+
+Two traps worth remembering:
+
+- An embed-only payload legitimately carries **no** `sources`. Code that treats
+  an empty `sources` array as failure will reject the one path that works on
+  Vercel.
+- The `waiting`-driven spinner is not evidence of loading. It shows whenever
+  playback has stalled, so an upstream rejection looks identical to buffering.
+  Check `/api/proxy` status before believing the player is still working.
+
 ## Remotes and pushing
 
 `origin` is `git@github.com:bluntedknives/crusedanime.git` over **SSH**, not
@@ -441,6 +489,15 @@ problem on the remote rather than a local one:
 ```bash
 ssh -T git@github.com   # expect "Hi bluntedknives/crusedanime!"
 ```
+
+**The key does not survive a rebuilt environment.** After a reset, `~/.ssh` is
+gone entirely, no `ssh` binary is installed, `gh` is logged out, and there is no
+`GITHUB_TOKEN`. Pushing is then impossible until the key is restored, and the
+failure is misleading: `git push` reports "Could not read from remote
+repository", which reads like a repo-permission problem but is really a missing
+local key. Check `ls ~/.ssh` and `command -v ssh` first. Commit locally, say
+plainly that the push needs the key, and do not attempt to work around it by
+switching the remote to HTTPS — there is no credential helper to answer.
 
 `openssh-client` was not installed in this image; if `ssh` is missing again,
 `sudo apt-get update && sudo apt-get install -y openssh-client`.
