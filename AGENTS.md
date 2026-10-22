@@ -476,31 +476,47 @@ so HTTPS pushes cannot authenticate at all — do not switch the remote back to
 an `https://github.com/...` URL expecting a credential helper to supply
 something. It will just fail.
 
-Auth is a dedicated ed25519 deploy key, scoped to this one repo:
+Auth is a dedicated ed25519 deploy key, scoped to this one repo. It lives on the
+**persistent** volume, not in `~`:
 
-- private key: `~/.ssh/id_ed25519_github` (mode 600)
-- public key: `~/.ssh/id_ed25519_github.pub`
-- `~/.ssh/config` pins `github.com` to that identity with `IdentitiesOnly yes`
+- private key: `/workspace/.ssh/id_ed25519_github` (mode 600)
+- public key: `/workspace/.ssh/id_ed25519_github.pub`
+- notes: `/workspace/GITHUB_SSH_NOTES.md`
+- bootstrap: `bash /workspace/bootstrap_push.sh`
 
 The public key is registered on the repo as a deploy key **with write access**.
-Verify auth before pushing, since a failure here looks like a permissions
-problem on the remote rather than a local one:
+
+### Filesystem persistence decides where secrets go
+
+`/workspace` is a persistent ext4 volume. `/` — including `~`, `~/.ssh` and
+`~/.openhands` — is an **ephemeral overlay** rebuilt between sessions. This has
+already cost one key: the original was written to `~/.ssh/id_ed25519_github`
+with notes in `~/.openhands/`, both on the ephemeral layer, and because the
+private key had never been printed it was unrecoverable. The repo survived
+untouched because it is on `/workspace`.
+
+So: any credential, key or note that must outlive the session belongs under
+`/workspace`. Prefer `/workspace/.ssh` over `~/.ssh` even though the latter is
+the conventional location.
+
+### There is no `ssh` binary
+
+`openssh-client` is absent and cannot be installed — `apt` has no candidate and
+there is no root. Pushing goes through `/workspace/push_github.py`, which speaks
+SSH via `paramiko` and drives `git-receive-pack` directly. Reinstall the
+dependencies after a rebuild (`paramiko`, `cryptography`), or run the bootstrap
+script, which does it for you.
+
+Verify auth and push with:
 
 ```bash
-ssh -T git@github.com   # expect "Hi bluntedknives/crusedanime!"
+python3 /workspace/push_github.py
 ```
 
-**The key does not survive a rebuilt environment.** After a reset, `~/.ssh` is
-gone entirely, no `ssh` binary is installed, `gh` is logged out, and there is no
-`GITHUB_TOKEN`. Pushing is then impossible until the key is restored, and the
-failure is misleading: `git push` reports "Could not read from remote
-repository", which reads like a repo-permission problem but is really a missing
-local key. Check `ls ~/.ssh` and `command -v ssh` first. Commit locally, say
-plainly that the push needs the key, and do not attempt to work around it by
-switching the remote to HTTPS — there is no credential helper to answer.
-
-`openssh-client` was not installed in this image; if `ssh` is missing again,
-`sudo apt-get update && sudo apt-get install -y openssh-client`.
+A failure here reads as a repo-permission problem but is usually a missing key
+or missing Python packages. Check `ls -l /workspace/.ssh` first. Do not work
+around it by switching the remote to HTTPS — there is no credential helper to
+answer.
 
 ### The shallow-clone trap
 
