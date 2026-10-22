@@ -419,3 +419,67 @@ another.
 Verified with Playwright: one click opens exactly one tab, navigation still
 completes, drag-select is skipped, ctrl/middle click are skipped, and the arm
 delay, cooldown, session cap and opt-out all suppress correctly.
+
+## Remotes and pushing
+
+`origin` is `git@github.com:bluntedknives/crusedanime.git` over **SSH**, not
+HTTPS. There is no GitHub token in this environment and `gh` is not logged in,
+so HTTPS pushes cannot authenticate at all — do not switch the remote back to
+an `https://github.com/...` URL expecting a credential helper to supply
+something. It will just fail.
+
+Auth is a dedicated ed25519 deploy key, scoped to this one repo:
+
+- private key: `~/.ssh/id_ed25519_github` (mode 600)
+- public key: `~/.ssh/id_ed25519_github.pub`
+- `~/.ssh/config` pins `github.com` to that identity with `IdentitiesOnly yes`
+
+The public key is registered on the repo as a deploy key **with write access**.
+Verify auth before pushing, since a failure here looks like a permissions
+problem on the remote rather than a local one:
+
+```bash
+ssh -T git@github.com   # expect "Hi bluntedknives/crusedanime!"
+```
+
+`openssh-client` was not installed in this image; if `ssh` is missing again,
+`sudo apt-get update && sudo apt-get install -y openssh-client`.
+
+### The shallow-clone trap
+
+The repo was cloned shallow, which is the reason the first push failed with:
+
+```
+remote: fatal: did not receive expected object <sha>
+error: remote unpack failed: index-pack failed
+```
+
+A shallow clone's oldest commit is *grafted*: it still records a `parent` in its
+object data, but that parent was never fetched and does not exist locally. Git
+hides this normally, but `git push` builds a pack from the reachable object
+graph, and the server rejects it when a commit references an object the pack
+does not contain. `git fetch --unshallow` is the normal fix, but it needs the
+original remote — the GitLab origin that supplied this clone has an expired
+token, so that route is closed.
+
+The working fix was to make the grafted commit a true root by dropping the
+dangling parent, then purging the refs that kept the old object reachable:
+
+```bash
+git filter-branch -f --parent-filter 'sed "s/ -p <missing-sha>//"' -- --all
+rm -f .git/shallow
+git update-ref -d refs/remotes/origin/HEAD          # stale, points at old commit
+for r in $(git for-each-ref --format='%(refname)' refs/original); do git update-ref -d "$r"; done
+git reflog expire --expire=now --all
+git gc --prune=now
+git fsck --no-progress                              # must be silent
+```
+
+`refs/original/*` is written to `packed-refs`, so `rm -rf .git/refs/original`
+alone does **not** remove it — `git update-ref -d` is required or `gc` keeps
+failing on the missing object. Rewriting history changed every commit sha; the
+tree contents were unaffected, and `.git` was backed up to `/tmp/git-backup`
+before the rewrite.
+
+The repo was published as a fresh single-branch history: 6 commits on `main`,
+no other branches. The GitLab remote and its token are gone from the config.
