@@ -468,6 +468,55 @@ Two traps worth remembering:
   playback has stalled, so an upstream rejection looks identical to buffering.
   Check `/api/proxy` status before believing the player is still working.
 
+## Vercel blocks deploys from commits it cannot attribute to the owner
+
+The pipeline is GitHub → Vercel, triggered on push to `main`. Vercel authorises
+each commit against the *author identity*, not the deploy key, so a commit
+authored by an account without contributing access is rejected:
+
+> Deployment Blocked — the deployment was blocked because the commit author did
+> not have contributing access to the project on Vercel. The Hobby Plan does not
+> support collaboration for private repositories.
+
+The symptom is deceptive: the push succeeds, the ref updates, and production
+keeps serving the previous build. Nothing in `git` reports an error, so it looks
+deployed when it is not. To confirm, compare a response body against a local
+build — if a field the new code returns is missing in production, the deploy was
+blocked.
+
+Commits must be authored as the repo owner:
+
+- name: `bluntedknives`
+- email: `bluntedhouse@proton.me`
+
+`git config user.name`/`user.email` are set to this in the repo. Never author as
+`openhands <openhands@all-hands.dev>` — that resolves to an unrelated account and
+Vercel refuses the deploy. Do not add `Co-authored-by: openhands …` trailers
+either, for the same reason.
+
+To repair history that already carries the wrong identity:
+
+```bash
+git filter-branch -f --env-filter '
+  export GIT_AUTHOR_NAME="bluntedknives"
+  export GIT_AUTHOR_EMAIL="bluntedhouse@proton.me"
+  export GIT_COMMITTER_NAME="bluntedknives"
+  export GIT_COMMITTER_EMAIL="bluntedhouse@proton.me"
+' --tag-name-filter cat -- --all
+
+# strip attribution trailers from the bodies too
+git filter-branch -f --msg-filter '
+  grep -viE "^co-authored-by: openhands <openhands@all-hands.dev>$" | \
+  grep -viE "^this commit was created by an ai agent \(openhands\) on behalf of the user\.$" | cat
+' --tag-name-filter cat -- --all
+
+# refs/original survives in packed-refs, so purge it explicitly
+git for-each-ref --format="%(refname)" refs/original/ | xargs -r -n1 git update-ref -d
+```
+
+Rewriting changes every SHA, so the next push is a force-push. Back up `.git`
+first — `/workspace/.git-backup` is the convention here.
+
 ## Remotes and pushing
 
 `origin` is `git@github.com:bluntedknives/crusedanime.git` over **SSH**, not
