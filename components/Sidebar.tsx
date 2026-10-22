@@ -53,10 +53,10 @@ export default function Sidebar({ covered = false }: { covered?: boolean }) {
       <aside className="fixed left-0 top-0 z-40 hidden h-full w-[var(--sidebar-w)] flex-col items-center gap-3 py-5 lg:flex">
         <Link
           href="/"
-          aria-label="AniStream home"
+          aria-label="crused.wtf home"
           className="grid h-9 w-9 place-items-center rounded-[8px] bg-accent font-display text-base font-black text-black"
         >
-          A
+          c
         </Link>
 
         <nav className="rail" aria-label="Primary">

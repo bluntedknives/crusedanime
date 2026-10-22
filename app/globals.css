@@ -400,3 +400,347 @@ video::cue {
 video::-webkit-media-controls-panel {
   background-image: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Ad system
+   Every slot reserves its exact height before any network is contacted, so
+   an ad that never arrives cannot move the page. The house box is a real,
+   labelled box rather than a spacer — a blank slot is the failure mode that
+   earns nothing.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.ad-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.ad-slot__host {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-slot__label {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.5rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.5rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+}
+
+/* The house box: honest, labelled, and always the same height as a real ad. */
+.house-ad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  padding: 1rem;
+  text-align: center;
+}
+.house-ad__tag {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.3);
+}
+.house-ad__text {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ── anchor: sticky bottom bar ─────────────────────────────────────────── */
+.ad-anchor {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 2rem 0.4rem 0.6rem;
+  background: rgba(8, 8, 10, 0.92);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  animation: ad-rise 0.35s ease-out;
+}
+.ad-anchor__close {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.4rem;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  transition: color 0.15s, background 0.15s;
+}
+.ad-anchor__close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+.ad-anchor .ad-slot {
+  border: 0;
+  background: transparent;
+  min-height: 0;
+}
+@keyframes ad-rise {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+/* The bar must never cover the end of the page content. */
+body:has(.ad-anchor) {
+  padding-bottom: 6.5rem;
+}
+
+/* ── interstitial ──────────────────────────────────────────────────────── */
+.ad-interstitial {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(6px);
+  animation: ad-fade 0.2s ease-out;
+}
+.ad-interstitial__panel {
+  position: relative;
+  width: 100%;
+  max-width: 40rem;
+  padding: 1rem;
+  background: #0d0d10;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+}
+.ad-interstitial__close {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 9999px;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+}
+.ad-interstitial__close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.15);
+}
+.ad-interstitial__skip {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.7rem;
+  border-radius: 0.6rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.05);
+  transition: background 0.15s;
+}
+.ad-interstitial__skip:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+@keyframes ad-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── consent ───────────────────────────────────────────────────────────── */
+.ad-consent {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  padding: 0.85rem 1rem;
+  background: rgba(10, 10, 12, 0.97);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.ad-consent__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem 1.25rem;
+  max-width: 60rem;
+  margin-inline: auto;
+}
+.ad-consent__text {
+  flex: 1 1 22rem;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.62);
+}
+.ad-consent__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+/* Reject and Accept are the same size on purpose. */
+.ad-consent__reject,
+.ad-consent__accept {
+  min-width: 6rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s;
+}
+.ad-consent__reject {
+  color: rgba(255, 255, 255, 0.8);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.ad-consent__reject:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.ad-consent__accept {
+  color: #08080a;
+  background: #fff;
+}
+.ad-consent__accept:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* ── anti-adblock note ─────────────────────────────────────────────────── */
+.ad-block-note {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 70;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  max-width: 20rem;
+  padding: 0.7rem 0.8rem;
+  background: rgba(14, 14, 17, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.7rem;
+  backdrop-filter: blur(10px);
+}
+.ad-block-note__text {
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.6);
+}
+.ad-block-note__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.ad-block-note__close:hover {
+  color: #fff;
+}
+
+/* ── sidebar sticky ────────────────────────────────────────────────────── */
+.ad-sidebar {
+  position: sticky;
+  top: 5.5rem;
+  align-self: start;
+}
+@media (max-width: 1279px) {
+  .ad-sidebar {
+    display: none;
+  }
+}
+
+/* In-feed ads sit in the grid without breaking its rhythm. */
+.ad-in-feed {
+  grid-column: 1 / -1;
+}
+
+/* On the watch page the player owns the screen; nothing sits under it. */
+body:has(.ad-anchor) .watch-shell {
+  padding-bottom: 0;
+}
+
+/* ── Adsterra Smartlink card ───────────────────────────────────────────── */
+.smartlink-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  padding: 1rem 1.1rem;
+  text-align: center;
+}
+.smartlink-card__tag {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+}
+.smartlink-card__headline {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+}
+.smartlink-card__body {
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.45);
+}
+.smartlink-card__cta {
+  margin-top: 0.5rem;
+  padding: 0.45rem 1.1rem;
+  border-radius: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #08080a;
+  background: #fff;
+  transition: background 0.15s;
+}
+.smartlink-card__cta:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* In the anchor bar the card lays out horizontally to stay short. */
+.ad-anchor .smartlink-card {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  padding: 0.25rem 0.5rem;
+}
+.ad-anchor .smartlink-card__body {
+  display: none;
+}
+.ad-anchor .smartlink-card__cta {
+  margin-top: 0;
+}

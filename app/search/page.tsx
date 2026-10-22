@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation'
 import { IconGrid, IconList } from '../../components/icons'
 import PosterCard from '@/components/PosterCard'
+import AdFooter from '@/components/ads/AdFooter'
 import FilterPanel, {
   EMPTY_FILTERS,
   filtersToQuery,
@@ -214,6 +215,8 @@ function SearchView() {
           )}
         </div>
       </div>
+
+      <AdFooter />
     </div>
   )
 }

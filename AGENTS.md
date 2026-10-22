@@ -378,3 +378,44 @@ commented rather than left bare.
 When a control "does nothing" on click, check what `elementFromPoint` returns at
 its centre before touching the handler. A JS `.click()` succeeding while a real
 mouse click fails is the signature of an overlay covering the element.
+
+## Click-anywhere monetisation
+
+`lib/ads/clickMonetization.ts` + `components/ads/ClickMonetization.tsx` turn any
+click on a non-player page into a Smartlink open, rate limited. Three things in
+there are load-bearing and easy to break:
+
+**The activation is consumed by the first `await`.** Browsers only allow a popup
+from a real user gesture, and awaiting anything before `window.open` spends that
+gesture — the open then fails silently, with no error anywhere. Every check in
+`fireClickAd` is synchronous for this reason. Do not make it async.
+
+**`noopener` in the feature string makes `window.open` return null on success.**
+That makes a blocked popup indistinguishable from a working one, and a blocked
+open must not burn the cooldown or the viewer loses the slot for a minute for
+nothing. The window is opened normally and `win.opener` is nulled immediately
+after instead, which keeps the reverse-tabnabbing protection and a real handle.
+
+**A drag ends in a `click` event.** Text selection and scrollbar dragging both
+fire `click`, so without the press-position check a viewer highlighting a title
+gets an ad. `notePress` records the pointerdown coordinates and anything past
+8px is skipped as `drag`. That is also why the listener needs `pointerdown` as
+well as `click`.
+
+Pacing is one open per 60s (localStorage, so it holds across tabs and reloads)
+and 8 per session (sessionStorage). Both are env-tunable, and `/debug/ads` shows
+the live counters with a reset button.
+
+`PopunderAd` stands down whenever click-anywhere is on: both open the same
+Smartlink on a user gesture, so running them together opens two tabs per click —
+the popunder on `pointerdown` and the click ad on the `click` that follows.
+
+Routes that own their clicks are excluded in `BLOCKED_ROUTES`. The player is
+the only one left: it treats every click as input, and hijacking that is a bug
+rather than monetisation. The consent banner and the ad surfaces are excluded by
+selector so the banner stays answerable and dismissing one ad does not spawn
+another.
+
+Verified with Playwright: one click opens exactly one tab, navigation still
+completes, drag-select is skipped, ctrl/middle click are skipped, and the arm
+delay, cooldown, session cap and opt-out all suppress correctly.

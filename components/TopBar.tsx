@@ -29,9 +29,9 @@ export default function TopBar({ covered = false }: { covered?: boolean }) {
     <>
       <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-base/85 backdrop-blur-xl">
         <div className="container-page flex h-16 items-center gap-3">
-          <Link href="/" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="AniStream home">
+          <Link href="/" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="crused.wtf home">
             <span className="grid h-8 w-8 place-items-center rounded-md bg-accent font-display text-base font-black text-base-900">
-              A
+              c
             </span>
           </Link>
 

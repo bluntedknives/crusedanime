@@ -29,7 +29,7 @@ const ENDPOINT = 'https://kitsu.io/api/edge'
 
 /** Kitsu returns 403 without a conventional UA. */
 const UA =
-  'Mozilla/5.0 (compatible; ani-stream/1.0; +https://github.com/ani-stream)'
+  'Mozilla/5.0 (compatible; crused.wtf/1.0)'
 
 const TIMEOUT_MS = 9000
 

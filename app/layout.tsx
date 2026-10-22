@@ -4,6 +4,12 @@ import './globals.css'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
 import CoverClient from '@/components/CoverClient'
+import AnchorAd from '@/components/ads/AnchorAd'
+import ConsentBanner from '@/components/ads/ConsentBanner'
+import InterstitialAd from '@/components/ads/InterstitialAd'
+import PopunderAd from '@/components/ads/PopunderAd'
+import ClickMonetization from '@/components/ads/ClickMonetization'
+import AdBlockPrompt from '@/components/ads/AdBlockPrompt'
 import { coverMetadata, isCovered } from '@/lib/coverServer'
 import { COVER_BRAND } from '@/lib/cover'
 
@@ -40,10 +46,10 @@ const mono = JetBrains_Mono({
 export async function generateMetadata(): Promise<Metadata> {
   if (!(await isCovered())) {
     return {
-      title: { default: 'AniStream — anime, tracked', template: '%s · AniStream' },
+      title: { default: 'crused.wtf', template: '%s · crused.wtf' },
       description:
-        'Browse, search and stream anime with AniList metadata. Trending, seasonal, schedules and your own watchlist — all in one dark-first interface.',
-      applicationName: 'AniStream',
+        'Browse, search and stream with AniList metadata. Trending, seasonal, schedules and your own watchlist in one dark-first interface.',
+      applicationName: 'crused.wtf',
       referrer: 'no-referrer',
     }
   }
@@ -71,6 +77,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <body className="min-h-screen font-sans antialiased">
         <CoverClient />
+      {/* Off by default: Adsterra's injected formats only load if a script src
+          is configured. Never mounted on the watch route. */}
+      {/* Page-level ad formats. Each one mounts after first paint so nothing
+          here competes with LCP, and each is dismissible. The anchor and
+          interstitial both stand down on /watch, where the player owns the
+          screen. */}
+      <ConsentBanner />
+      <AnchorAd />
+      <InterstitialAd />
+      <PopunderAd />
+      {/* Turns any click into a rate-limited Smartlink open. Renders nothing;
+          see lib/ads/clickMonetization.ts for the pacing rules. */}
+      <ClickMonetization />
+      <AdBlockPrompt />
         <Sidebar covered={covered} />
         <div className="lg:pl-[var(--sidebar-w)]">
           <TopBar covered={covered} />
@@ -79,7 +99,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <p className="mx-auto max-w-2xl font-mono text-[0.65rem] leading-relaxed tracking-wide text-zinc-600">
               {covered
                 ? `A personal catalogue index. Entries are referenced from third-party providers and played back locally. ${COVER_BRAND} hosts no content.`
-                : `Metadata from AniList. Streams are resolved from third-party providers and proxied for playback. AniStream hosts no content.`}
+                : `Metadata from AniList. Streams are resolved from third-party providers and proxied for playback. crused.wtf hosts no content.`}
             </p>
           </footer>
         </div>

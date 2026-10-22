@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { IconClose } from './icons'
 import { usePrefs, useViewMode } from '@/lib/store'
 import { CoverToggle } from './CoverClient'
+import AdsToggle from './ads/AdsToggle'
 
 interface Props {
   open: boolean
@@ -122,6 +123,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
             onChange={(v) => update({ skipIntro: v })}
           />
           <CoverToggle />
+          <AdsToggle />
 
           <Toggle
             label="Subtitles on by default"

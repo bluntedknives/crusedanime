@@ -2,6 +2,8 @@ import { Suspense } from 'react'
 import * as data from '@/lib/data'
 import type { Media } from '@/lib/anilist'
 import MediaRail from '@/components/MediaRail'
+import AdRail from '@/components/ads/AdRail'
+import AdFooter from '@/components/ads/AdFooter'
 import PosterCard from '@/components/PosterCard'
 import ContinueWatching from '@/components/ContinueWatching'
 import HeroSpotlight from '@/components/HeroSpotlight'
@@ -34,6 +36,11 @@ async function Rails() {
       {popular.data.length > 0 && (
         <MediaRail title="Airing now" eyebrow="This week" items={popular.data} href="/trending" />
       )}
+
+      {/* One in-grid slot, below the fold-ish first rail. A sibling of the
+          rails rather than nested inside one, so it never becomes a second
+          child of a `&&` expression. */}
+      <AdRail className="mb-8" />
       {top.data.length > 0 && (
         <MediaRail
           title="Top rated"
@@ -119,6 +126,8 @@ export default function HomePage() {
       >
         <MovieRails />
       </Suspense>
+
+      <AdFooter />
     </div>
   )
 }
