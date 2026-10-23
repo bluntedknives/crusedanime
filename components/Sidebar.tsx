@@ -8,12 +8,15 @@ import { useState } from 'react'
 import {
   IconBookmark,
   IconCalendar,
+  IconChart,
   IconCompass,
   IconFlame,
+  IconGrid2,
   IconHistory,
   IconHome,
   IconSettings,
   IconShuffle,
+  IconSparkle,
 } from './icons'
 import SettingsDialog from './SettingsDialog'
 
@@ -29,8 +32,11 @@ const ITEMS: RailItem[] = [
   { href: '/search', label: 'Browse', icon: IconCompass },
   { href: '/trending', label: 'Trending', icon: IconFlame },
   { href: '/schedule', label: 'Schedule', icon: IconCalendar },
+  { href: '/season', label: 'Seasons', icon: IconGrid2 },
+  { href: '/genres', label: 'Genres', icon: IconSparkle },
   { href: '/watchlist', label: 'Watchlist', icon: IconBookmark },
   { href: '/history', label: 'History', icon: IconHistory },
+  { href: '/stats', label: 'Stats', icon: IconChart },
 ]
 
 /**

@@ -7,6 +7,7 @@ import Synopsis from '@/components/Synopsis'
 import TrailerEmbed from '@/components/TrailerEmbed'
 import EpisodeSection from '@/components/EpisodeSection'
 import DetailHero from '@/components/DetailHero'
+import { RatingWidget } from '@/components/DetailActions'
 import * as data from '@/lib/data'
 import PreviewBanner from '@/components/PreviewBanner'
 import {
@@ -232,6 +233,10 @@ export default async function AnimeDetailPage({ params }: Params) {
           </div>
 
           <aside className="space-y-5">
+            <section className="surface p-4">
+              <RatingWidget animeId={media.id} title={title} />
+            </section>
+
             <TrailerEmbed trailer={media.trailer} title={title} covered={covered} />
 
             {media.externalLinks?.length ? (

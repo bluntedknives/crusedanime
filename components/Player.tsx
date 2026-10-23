@@ -54,6 +54,8 @@ interface Props {
   animeTitle: string
   poster: string
   totalEpisodes: number | null
+  /** Stored with progress so the stats page can group without refetching. */
+  genres?: string[]
   episode: number
   type: 'sub' | 'dub'
   payload: PlayerPayload | null
@@ -123,6 +125,7 @@ export default function Player({
   animeTitle,
   poster,
   totalEpisodes,
+  genres,
   episode,
   type,
   payload,
@@ -441,9 +444,10 @@ export default function Player({
         poster,
         totalEpisodes,
         type,
+        genres,
       })
     },
-    [animeId, episode, animeTitle, poster, totalEpisodes, type, save],
+    [animeId, episode, animeTitle, poster, totalEpisodes, genres, type, save],
   )
 
   useEffect(() => {

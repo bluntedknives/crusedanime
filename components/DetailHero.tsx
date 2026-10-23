@@ -15,6 +15,7 @@ import {
   type Media,
 } from '@/lib/anilist'
 import { useProgress, useWatchlist } from '@/lib/store'
+import { ShareButton } from './DetailActions'
 import WarmStream from './WarmStream'
 
 interface Props {
@@ -144,6 +145,8 @@ export default function DetailHero({ media }: Props) {
                   )}
                   {inList ? 'In watchlist' : 'Add to watchlist'}
                 </button>
+
+                <ShareButton title={title} className="h-11 px-4" />
               </div>
 
               {resumePct > 0 && (

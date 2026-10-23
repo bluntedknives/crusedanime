@@ -410,3 +410,86 @@ export function IconExternal(p: IconProps) {
     </Svg>
   )
 }
+
+export function IconChart(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 20V10" />
+      <path d="M10 20V4" />
+      <path d="M16 20v-7" />
+      <path d="M22 20H2" />
+    </Svg>
+  )
+}
+
+export function IconShare(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="18" cy="5" r="2.6" />
+      <circle cx="6" cy="12" r="2.6" />
+      <circle cx="18" cy="19" r="2.6" />
+      <path d="m8.3 10.7 7.4-4.3" />
+      <path d="m8.3 13.3 7.4 4.3" />
+    </Svg>
+  )
+}
+
+export function IconFlame2(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 3s5 4.2 5 8.6a5 5 0 0 1-10 0C7 9 9 7 9 7s.4 2.2 2 2.6C11.6 9 12 3 12 3Z" />
+    </Svg>
+  )
+}
+
+export function IconDownload(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 4v10" />
+      <path d="m7.5 10 4.5 4.5L16.5 10" />
+      <path d="M4.5 18.5h15" />
+    </Svg>
+  )
+}
+
+export function IconUpload(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 15V5" />
+      <path d="M7.5 9 12 4.5 16.5 9" />
+      <path d="M4.5 18.5h15" />
+    </Svg>
+  )
+}
+
+export function IconTrophy(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M7 4h10v5a5 5 0 0 1-10 0V4Z" />
+      <path d="M7 5.5H4.5V8a3 3 0 0 0 3 3" />
+      <path d="M17 5.5h2.5V8a3 3 0 0 1-3 3" />
+      <path d="M12 14v3.5" />
+      <path d="M8.5 20.5h7l-.7-3h-5.6Z" />
+    </Svg>
+  )
+}
+
+export function IconGrid2(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="4" y="4" width="7" height="7" rx="1.2" />
+      <rect x="13" y="4" width="7" height="7" rx="1.2" />
+      <rect x="4" y="13" width="7" height="7" rx="1.2" />
+      <rect x="13" y="13" width="7" height="7" rx="1.2" />
+    </Svg>
+  )
+}
+
+export function IconSparkle(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 3.5 13.6 9 19 10.6 13.6 12.2 12 17.7 10.4 12.2 5 10.6 10.4 9Z" />
+      <path d="M18.5 16.5 19.2 19l2.5.7-2.5.7-.7 2.5-.7-2.5-2.5-.7 2.5-.7Z" />
+    </Svg>
+  )
+}

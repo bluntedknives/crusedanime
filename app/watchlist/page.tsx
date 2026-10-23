@@ -15,6 +15,27 @@ const STATUS_LABELS: Record<WatchStatus, string> = {
 
 const ORDER: WatchStatus[] = ['watching', 'planned', 'completed', 'paused', 'dropped']
 
+type SortKey = 'updated' | 'added' | 'title' | 'score' | 'progress'
+
+const SORTS: { value: SortKey; label: string }[] = [
+  { value: 'updated', label: 'Recently updated' },
+  { value: 'added', label: 'Recently added' },
+  { value: 'title', label: 'Title A–Z' },
+  { value: 'score', label: 'Highest rated' },
+  { value: 'progress', label: 'Progress' },
+]
+
+/** How far through a title the viewer is, 0–1. Drives the progress sort. */
+function progressRatio(
+  e: { id: number; episodes: number | null; watchedEpisodes?: number },
+  progress: Record<number, { position: number; duration: number }>,
+): number {
+  const p = progress[e.id]
+  if (p?.duration) return Math.min(1, p.position / p.duration)
+  if (e.episodes && e.watchedEpisodes) return Math.min(1, e.watchedEpisodes / e.episodes)
+  return 0
+}
+
 function EntryCard({
   entry,
   view,
@@ -174,6 +195,8 @@ export default function WatchlistPage() {
   const { all, continueWatching, clear: clearProgress } = useProgress()
   const [tab, setTab] = useState<'all' | WatchStatus>('all')
   const [query, setQuery] = useState('')
+  const [genre, setGenre] = useState('')
+  const [sort, setSort] = useState<SortKey>('updated')
 
   const progressFor = useMemo(() => {
     const map: Record<number, { episode: number; position: number; duration: number }> = {}
@@ -186,12 +209,42 @@ export default function WatchlistPage() {
     return map
   }, [all])
 
+  // Every genre present in the list, most common first, so the filter only ever
+  // offers values that can actually match.
+  const genreOptions = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const e of entries) {
+      for (const g of e.genres ?? []) counts.set(g, (counts.get(g) ?? 0) + 1)
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g)
+  }, [entries])
+
   const filtered = useMemo(() => {
     let list = tab === 'all' ? entries : byStatus[tab]
     const q = query.trim().toLowerCase()
     if (q) list = list.filter((e) => e.title.toLowerCase().includes(q))
-    return [...list].sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [entries, byStatus, tab, query])
+    if (genre) list = list.filter((e) => (e.genres ?? []).includes(genre))
+
+    const sorted = [...list]
+    switch (sort) {
+      case 'title':
+        sorted.sort((a, b) => a.title.localeCompare(b.title))
+        break
+      case 'score':
+        // Unscored titles sink rather than pretending to be zero.
+        sorted.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+        break
+      case 'added':
+        sorted.sort((a, b) => b.addedAt - a.addedAt)
+        break
+      case 'progress':
+        sorted.sort((a, b) => progressRatio(b, progressFor) - progressRatio(a, progressFor))
+        break
+      default:
+        sorted.sort((a, b) => b.updatedAt - a.updatedAt)
+    }
+    return sorted
+  }, [entries, byStatus, tab, query, genre, sort, progressFor])
 
   const counts = useMemo(
     () => ({
@@ -204,6 +257,20 @@ export default function WatchlistPage() {
     [entries.length, byStatus],
   )
 
+  /** Totals shown under the heading, so the list has a sense of scale. */
+  const totals = useMemo(() => {
+    let episodes = 0
+    let remaining = 0
+    for (const e of entries) {
+      const done = e.watchedEpisodes ?? 0
+      episodes += done
+      if (e.episodes) remaining += Math.max(0, e.episodes - done)
+    }
+    return { episodes, remaining }
+  }, [entries])
+
+  const filtersActive = Boolean(query.trim() || genre || sort !== 'updated')
+
   return (
     <div className="container-page animate-fade-in pt-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -211,6 +278,13 @@ export default function WatchlistPage() {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl">My watchlist</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Stored locally in your browser · {entries.length} title{entries.length === 1 ? '' : 's'}
+            {totals.episodes > 0 && (
+              <>
+                {' · '}
+                {totals.episodes} episode{totals.episodes === 1 ? '' : 's'} watched
+              </>
+            )}
+            {totals.remaining > 0 && <> · {totals.remaining} to go</>}
           </p>
         </div>
 
@@ -304,12 +378,58 @@ export default function WatchlistPage() {
           ))}
         </div>
 
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter your list…"
-          className="input ml-auto w-full py-2 text-[13px] sm:w-64"
-        />
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter your list…"
+            aria-label="Filter watchlist by title"
+            className="input w-full py-2 text-[13px] sm:w-52"
+          />
+
+          {genreOptions.length > 0 && (
+            <select
+              value={genre}
+              onChange={(e) => setGenre(e.target.value)}
+              aria-label="Filter by genre"
+              className="input w-full py-2 text-[13px] sm:w-40"
+            >
+              <option value="">All genres</option>
+              {genreOptions.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            aria-label="Sort watchlist"
+            className="input w-full py-2 text-[13px] sm:w-44"
+          >
+            {SORTS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('')
+                setGenre('')
+                setSort('updated')
+              }}
+              className="btn-ghost px-2 py-2 text-xs"
+            >
+              Reset
+            </button>
+          )}
+        </div>
       </div>
 
       {!ready ? (

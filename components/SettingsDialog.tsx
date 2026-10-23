@@ -5,6 +5,7 @@ import { IconClose } from './icons'
 import { usePrefs, useViewMode } from '@/lib/store'
 import { CoverToggle } from './CoverClient'
 import AdsToggle from './ads/AdsToggle'
+import BackupPanel from './BackupPanel'
 
 interface Props {
   open: boolean
@@ -154,6 +155,11 @@ export default function SettingsDialog({ open, onClose }: Props) {
               ))}
             </div>
           </div>
+
+          <p className="mt-2 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-600">
+            Your data
+          </p>
+          <BackupPanel />
         </div>
       </div>
     </div>

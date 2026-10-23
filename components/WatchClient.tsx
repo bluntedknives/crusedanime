@@ -220,6 +220,7 @@ export default function WatchClient({
               animeTitle={title}
               poster={media.bannerImage || posterOf(media)}
               totalEpisodes={totalEpisodes}
+              genres={media.genres ?? []}
               episode={episode}
               type={type}
               payload={payload}
