@@ -180,12 +180,37 @@ function childUris(text: string, base: string): string[] {
 }
 
 /**
+ * Retry a hop once on failure.
+ *
+ * Every invocation rebuilds the chain itself, so a transient upstream hiccup on
+ * a cold instance surfaces as a 502 on that one request. hls.js does retry, but
+ * one extra server-side attempt turns most of those into a success instead of a
+ * visible stall.
+ */
+async function attempt<T>(fn: () => Promise<T>, tries = 2): Promise<T> {
+  let lastErr: unknown
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 300))
+    }
+  }
+  throw lastErr
+}
+
+/**
  * Resolve the player page for an episode into signed manifest urls.
  *
  * The embed path is constructible from the AniList id and episode number, so
  * this skips the much slower site scrape and its 40 s worst case.
  */
 async function buildChain(t: Pick<TunnelToken, 'a' | 'e' | 'y' | 'm'>): Promise<Chain> {
+  const key = chainKey(t)
+  const cached = chains.get(key)
+  if (cached && cached.expires > Date.now()) return cached
+
   // The embed path carries the episode number: /embed/<server>/ani/<id>/<ep>/<type>.
   const candidates = [`${Z_CDN}/embed/hd-2/ani/${t.a}/${t.e}/${t.y}`]
   if (t.m) candidates.push(`${Z_CDN}/embed/hd-2/mal/${t.m}/${t.e}/${t.y}`)
@@ -285,9 +310,11 @@ export async function getChain(
 /** Fetch playlist `m` and record whether its children are playlists or media. */
 async function loadPlaylist(chain: Chain, m: number): Promise<void> {
   const url = chain.flat[m]
-  const res = await upstream(url, chain.embed)
-  if (!res.ok) throw new Error(`playlist ${m} -> ${res.status}`)
-  const text = await res.text()
+  const text = await attempt(async () => {
+    const res = await upstream(url, chain.embed)
+    if (!res.ok) throw new Error(`playlist ${m} -> ${res.status}`)
+    return res.text()
+  })
   chain.text.set(m, text)
 
   const children = childUris(text, url)
@@ -414,11 +441,20 @@ export async function fetchSegment(
   await ensurePlaylist(chain, n)
   const url = chain.segs.get(n)?.[j]
   if (!url) throw new Error(`segment ${n}/${j} is not in the playlist`)
-  return upstream(url, chain.embed, range ? { Range: range } : {})
+  return attempt(async () => {
+    const res = await upstream(url, chain.embed, range ? { Range: range } : {})
+    // 206 is a normal ranged reply; anything else non-ok is worth one retry.
+    if (!res.ok && res.status !== 206) throw new Error(`segment ${n}/${j} -> ${res.status}`)
+    return res
+  })
 }
 
 export async function fetchSubtitle(chain: Chain, i: number): Promise<Response> {
   const track = chain.subtitles[i]
   if (!track) throw new Error(`subtitle ${i} is not in the manifest`)
-  return upstream(track.url, chain.embed)
+  return attempt(async () => {
+    const res = await upstream(track.url, chain.embed)
+    if (!res.ok) throw new Error(`subtitle ${i} -> ${res.status}`)
+    return res
+  })
 }
