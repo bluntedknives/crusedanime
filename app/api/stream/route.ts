@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { providerHealth, resolveStream } from '@/lib/consumet'
-import { tunnelFor } from '@/lib/tunnel'
+import { TunnelError, tunnelFor } from '@/lib/tunnel'
 import { encodeTarget } from '@/lib/cover'
 
 export const runtime = 'nodejs'
@@ -109,7 +109,29 @@ export async function GET(req: NextRequest) {
         })
       }
     } catch (err) {
-      // Fall through to the scrape-based resolver.
+      /*
+       * The tunnel is the path that produces subtitles and native controls, so
+       * if it cannot build a chain the provider's own player page is still a
+       * working answer. Returning it here avoids falling through to the
+       * scrape-based resolver, which can spend the whole function budget on a
+       * title whose upstream never responds — the caller would see a gateway
+       * timeout instead of a playable page.
+       */
+      if (err instanceof TunnelError && err.embedUrl) {
+        return NextResponse.json({
+          provider: 'zangetsu:embed',
+          embedUrl: err.embedUrl,
+          sources: [],
+          subtitles: [],
+          headers: {},
+          intro: null,
+          outro: null,
+          episode,
+          type,
+          tunnel: false,
+        })
+      }
+      // Any other failure falls through to the scrape-based resolver.
       if (p.get('debug')) console.error('tunnel failed', err)
     }
 

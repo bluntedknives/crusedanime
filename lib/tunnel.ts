@@ -27,7 +27,33 @@ const UA =
 
 const CHAIN_TTL_MS = 10 * 60_000
 
+/**
+ * Per-request ceiling for the chain build.
+ *
+ * Upstreams occasionally accept a connection and then never respond — the
+ * provider's `getSources` did exactly that for one title. Without a deadline
+ * that burns the whole function invocation and the caller gets a gateway
+ * timeout instead of the embed fallback, so every hop is bounded and the whole
+ * build is kept well inside the platform limit.
+ */
+const CHAIN_BUDGET_MS = 25_000
+const HOP_TIMEOUT_MS = 8_000
+
 export type StreamType = 'sub' | 'dub'
+
+/**
+ * Raised when the chain cannot be built. Carries the player page so the caller
+ * can still offer playback through the provider's own player rather than
+ * leaving the viewer with an error.
+ */
+export class TunnelError extends Error {
+  readonly embedUrl: string | null
+  constructor(message: string, embedUrl: string | null) {
+    super(message)
+    this.name = 'TunnelError'
+    this.embedUrl = embedUrl
+  }
+}
 
 /** A position in a resolved chain. Deliberately opaque to the client. */
 export interface TunnelToken {
@@ -115,11 +141,12 @@ function normaliseMark(
   return { start, end }
 }
 
-/** Upstream fetch carrying the headers the provider expects. */
+/** Upstream fetch carrying the headers the provider expects, always bounded. */
 async function upstream(
   url: string,
   referer: string,
   extra: Record<string, string> = {},
+  deadline?: number,
 ): Promise<Response> {
   let origin = Z_CDN
   try {
@@ -127,6 +154,8 @@ async function upstream(
   } catch {
     /* keep the fallback origin */
   }
+  const budget = deadline === undefined ? HOP_TIMEOUT_MS : Math.min(HOP_TIMEOUT_MS, deadline - Date.now())
+  if (budget <= 0) throw new Error('chain budget exhausted')
   return fetch(url, {
     headers: {
       'User-Agent': UA,
@@ -137,6 +166,7 @@ async function upstream(
     },
     redirect: 'follow',
     cache: 'no-store',
+    signal: AbortSignal.timeout(budget),
   })
 }
 
@@ -161,9 +191,14 @@ async function buildChain(t: Pick<TunnelToken, 'a' | 'e' | 'y' | 'm'>): Promise<
   if (t.m) candidates.push(`${Z_CDN}/embed/hd-2/mal/${t.m}/${t.e}/${t.y}`)
 
   const errors: string[] = []
+  const deadline = Date.now() + CHAIN_BUDGET_MS
   for (const embedUrl of candidates) {
+    if (Date.now() >= deadline) {
+      errors.push('chain budget exhausted')
+      break
+    }
     try {
-      const page = await upstream(embedUrl, `${ZANGETSU}/`)
+      const page = await upstream(embedUrl, `${ZANGETSU}/`, {}, deadline)
       if (!page.ok) throw new Error(`embed ${page.status}`)
       const html = await page.text()
       // The CDN 301s to its media host; that origin is what the Referer and
@@ -173,9 +208,12 @@ async function buildChain(t: Pick<TunnelToken, 'a' | 'e' | 'y' | 'm'>): Promise<
       const m = html.match(/sourcesUrl\s*=\s*'([^']+)'/)
       if (!m) throw new Error('embed exposed no manifest url')
 
-      const man = await upstream(absolutise(m[1], embed), embed, {
-        Accept: 'application/json, text/plain, */*',
-      })
+      const man = await upstream(
+        absolutise(m[1], embed),
+        embed,
+        { Accept: 'application/json, text/plain, */*' },
+        deadline,
+      )
       if (!man.ok) throw new Error(`sources ${man.status}`)
 
       const j = (await man.json()) as {
@@ -220,7 +258,7 @@ async function buildChain(t: Pick<TunnelToken, 'a' | 'e' | 'y' | 'm'>): Promise<
     }
   }
 
-  throw new Error(`stream chain failed: ${errors.join(' | ')}`)
+  throw new TunnelError(`stream chain failed: ${errors.join(' | ')}`, candidates[0])
 }
 
 export async function getChain(
