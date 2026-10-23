@@ -441,23 +441,30 @@ Measured on the live deployment:
   specifically that the two functions do not share one — not that Vercel is
   inherently unusable.
 
-The fix is to let the **browser** do the whole exchange. `resolveStream` returns
-`embedUrl`, the provider's own player page, and `Player` renders it in an iframe.
-Mint and fetch then happen on the viewer's single client IP, which the CDN
-accepts. Verified playing: `readyState 4`, `currentTime 11.9s`, `buffered 36.5s`.
+### The fix: `lib/tunnel.ts`, a self-contained chain
 
-Both paths are returned and the client chooses:
+A *single* invocation can mint and fetch. Verified: one lambda resolving the
+chain and then fetching a real media segment got `200` with 259 KB of MPEG-TS
+(`magic 47 40`), while the same URLs fetched by a second invocation got `502`.
+And a warm lambda keeps its address between requests.
 
-- **Native** (proxied `sources`) is preferred — native controls, subtitle
-  tracks, intro/outro skipping. Works wherever the server keeps one egress IP,
-  including a long-lived container or a VM.
-- **Embed** (`embedUrl`) is the fallback. A cross-origin frame gives up
-  everything above, but it plays where the proxy cannot.
+So the proxy never accepts an upstream URL. `lib/tunnel.ts` re-derives the chain
+inside whichever invocation serves the request, and `/api/hls` serves *positions*
+in that chain:
 
-`Player` probes the proxied manifest once before handing it to hls.js, so the
-switch is immediate rather than several timed retries of spinner. Fatal network
-retries are bounded; if there is no embed to fall back to, a real error is shown
-instead of an endless loop.
+- Token = `{a: anilistId, e: episode, y: sub|dub, m: malId, k: p|s|t|u, n, j, i}`,
+  base64url. `k: p` is a playlist, `s` a segment, `t` a subtitle, `u` a verbatim
+  URL for auxiliary files.
+- Indices are assigned in discovery order, which is deterministic, so a **cold**
+  instance replaying the chain lands on the same positions a warm one used.
+  This is what makes it work when Vercel rotates the instance between requests.
+- The chain is cached per instance for 10 minutes; `after()` in the `warm`
+  prefetch builds it so the first segment request usually hits a warm instance.
+- The embed path is constructible as `/embed/hd-2/ani/<anilistId>/<episode>/<type>`,
+  which skips the ~40 s site scrape entirely. The MAL variant is the fallback.
+
+The browser never sees an upstream host. `Player` still renders `embedUrl` if
+hls.js fails, so the cross-origin frame remains the last resort.
 
 Two traps worth remembering:
 
@@ -466,7 +473,18 @@ Two traps worth remembering:
   Vercel.
 - The `waiting`-driven spinner is not evidence of loading. It shows whenever
   playback has stalled, so an upstream rejection looks identical to buffering.
-  Check `/api/proxy` status before believing the player is still working.
+  Check `/api/hls` status before believing the player is still working.
+
+### Bound every upstream hop
+
+One title's `getSources` accepted the connection and never answered. With no
+deadline the chain build ran until the platform killed the invocation, so the
+viewer got a gateway timeout instead of the embed fallback. Every hop carries a
+timeout (`HOP_TIMEOUT_MS`) and the whole build has a budget (`CHAIN_BUDGET_MS`).
+When the chain cannot be built, `TunnelError` carries the player page and
+`/api/stream` returns that embed directly rather than falling through to the
+scrape-based resolver, which can burn the whole function budget on the same
+unresponsive upstream.
 
 ## Vercel blocks deploys from commits it cannot attribute to the owner
 
@@ -555,9 +573,14 @@ the conventional location.
 
 `openssh-client` is absent and cannot be installed — `apt` has no candidate and
 there is no root. Pushing goes through `/workspace/push_github.py`, which speaks
-SSH via `paramiko` and drives `git-receive-pack` directly. Reinstall the
-dependencies after a rebuild (`paramiko`, `cryptography`), or run the bootstrap
-script, which does it for you.
+SSH via `paramiko` and drives `git-receive-pack` directly.
+
+The script bootstraps its own dependencies, and installs them to
+`/workspace/.pylibs` rather than the interpreter's `site-packages`. That matters
+for the same reason the key lives under `/workspace`: a plain `pip install`
+lands on the ephemeral root layer and is gone after a rebuild, so the import
+fails on the next session. A `--target` install on the persistent volume
+survives, and the script puts that directory on `sys.path` before importing.
 
 Verify auth and push with:
 
