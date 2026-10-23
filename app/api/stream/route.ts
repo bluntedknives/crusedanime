@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server'
-import { providerHealth, resolveStream, type ResolveStreamInput } from '@/lib/consumet'
+import { providerHealth, resolveStream } from '@/lib/consumet'
+import { tunnelFor } from '@/lib/tunnel'
 import { encodeTarget } from '@/lib/cover'
 
 export const runtime = 'nodejs'
@@ -12,17 +13,14 @@ export const maxDuration = 120
  * Query: anilistId, title, episode, [malId], [alt], [type=sub|dub]
  * `?health=1` instead probes every provider and reports reachability.
  */
-/** True when the proxied source actually serves a manifest from this egress. */
-async function playable(path: string, req: NextRequest): Promise<boolean> {
-  try {
-    const res = await fetch(new URL(path, req.nextUrl.origin), {
-      signal: AbortSignal.timeout(6000),
-    })
-    if (!res.ok) return false
-    return (await res.text()).slice(0, 2048).includes('#EXTM3U')
-  } catch {
-    return false
+/** Origin the browser used, so tunnel tokens point back at this deployment. */
+function requestOrigin(req: NextRequest): string {
+  const host = req.headers.get('x-forwarded-host')
+  if (host) {
+    const proto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() || 'https'
+    return `${proto}://${host.split(',')[0].trim()}`
   }
+  return req.nextUrl.origin
 }
 
 export async function GET(req: NextRequest) {
@@ -53,25 +51,68 @@ export async function GET(req: NextRequest) {
   // spinner, so the detail page warms this instead. `after` keeps the work
   // alive past the response, which a bare floating promise would not.
   if (p.get('warm')) {
-    const warmInput: ResolveStreamInput = {
-      anilistId,
-      malId: Number.isFinite(malIdRaw) && malIdRaw > 0 ? malIdRaw : null,
-      title,
-      altTitles: p.getAll('alt').filter(Boolean),
-      episode,
-      type,
-    }
+    const malId = Number.isFinite(malIdRaw) && malIdRaw > 0 ? malIdRaw : null
     after(async () => {
       try {
-        await resolveStream(warmInput)
+        // Warming the tunnel matters most: it is the path playback takes, and
+        // the chain it caches is what lets the first segment request hit a warm
+        // instance rather than paying for a cold resolve.
+        await tunnelFor({ anilistId, malId, episode, type, origin: requestOrigin(req) })
       } catch {
         /* a failed warm is harmless; the real request will retry */
+      }
+      try {
+        await resolveStream({
+          anilistId,
+          malId,
+          title,
+          altTitles: p.getAll('alt').filter(Boolean),
+          episode,
+          type,
+        })
+      } catch {
+        /* the scrape-based fallback is best-effort */
       }
     })
     return NextResponse.json({ warming: true })
   }
 
   try {
+    /*
+     * The tunnel is the primary path. It builds the signed-URL chain inside
+     * whichever invocation serves the request, so mint and fetch always share
+     * one egress IP — the property the CDN requires and a separate proxy route
+     * cannot provide. `resolveStream` stays as the fallback for episodes the
+     * direct embed path cannot address.
+     */
+    const origin = requestOrigin(req)
+    try {
+      const tunnel = await tunnelFor({
+        anilistId,
+        malId: Number.isFinite(malIdRaw) && malIdRaw > 0 ? malIdRaw : null,
+        episode,
+        type,
+        origin,
+      })
+      if (tunnel.sources.length) {
+        return NextResponse.json({
+          provider: tunnel.provider,
+          embedUrl: tunnel.embedUrl,
+          sources: tunnel.sources,
+          subtitles: tunnel.subtitles,
+          headers: {},
+          intro: tunnel.intro,
+          outro: tunnel.outro,
+          episode,
+          type,
+          tunnel: true,
+        })
+      }
+    } catch (err) {
+      // Fall through to the scrape-based resolver.
+      if (p.get('debug')) console.error('tunnel failed', err)
+    }
+
     const payload = await resolveStream({
       anilistId,
       malId: Number.isFinite(malIdRaw) && malIdRaw > 0 ? malIdRaw : null,
@@ -87,36 +128,13 @@ export async function GET(req: NextRequest) {
     // host in the URL, where an extension can read it.
     const proxy = (u: string) => `/api/proxy?t=${encodeTarget(u, payload.headers.Referer ?? '')}`
 
-    /*
-     * Both playback paths are returned and the client picks.
-     *
-     * `sources` go through this app's proxy, which is the better experience —
-     * native controls, subtitle tracks, intro/outro skipping — but only works
-     * where the server keeps one egress IP, because the CDN signs every URL
-     * against the address that requested it.
-     *
-     * `embedUrl` is the provider's own player page. The browser fetches it
-     * directly, so mint and fetch share one IP and it works anywhere, at the
-     * cost of a cross-origin frame the app cannot instrument.
-     *
-     * Where the proxy cannot serve the manifest — the usual case on serverless,
-     * since minting and fetching land on different egress IPs — drop the
-     * sources so the client opens the embed immediately. Otherwise it waits for
-     * hls.js to exhaust its retries, which is the "keeps loading" symptom.
-     */
-    const sources = payload.sources.map((s) => ({ ...s, url: proxy(s.url) }))
-    let usable = sources
-    if (payload.embedUrl && sources.length) {
-      if (!(await playable(sources[0].url, req))) usable = []
-    }
-
     return NextResponse.json({
       provider: payload.provider,
       embedUrl: payload.embedUrl ?? null,
-      sources: usable,
+      sources: payload.sources.map((s) => ({ ...s, url: proxy(s.url) })),
       /** Raw urls kept server-side only for debugging via ?raw=1. */
       rawSources: p.get('raw') ? payload.sources : undefined,
-      subtitles: usable.length ? payload.subtitles.map((s) => ({ ...s, url: proxy(s.url) })) : [],
+      subtitles: payload.subtitles.map((s) => ({ ...s, url: proxy(s.url) })),
       headers: payload.headers,
       intro: payload.intro ?? null,
       outro: payload.outro ?? null,
