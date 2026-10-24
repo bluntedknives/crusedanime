@@ -20,7 +20,13 @@ import {
   IconVolumeMute,
 } from './icons'
 import { usePrefs, useProgress, formatTime } from '@/lib/store'
-import { decideRecovery, type RecoveryAction } from '@/lib/watchdog'
+import {
+  advanceClock,
+  decideRecovery,
+  newClock,
+  type RecoveryAction,
+  type StallClock,
+} from '@/lib/watchdog'
 
 export interface PlayerSource {
   url: string
@@ -193,19 +199,38 @@ export default function Player({
   /**
    * Stall recovery.
    *
-   * `attempts` counts the recovery rungs already spent on the current stall,
-   * `stalledSince` is the wall-clock start of that stall, and `recovering` is
-   * the label shown to the viewer while the ladder works. Keeping the count in
-   * a ref means the polling timer can read it without being torn down and
-   * rebuilt on every attempt.
+   * `recoveryAttempts` counts the rungs already spent on the current run of
+   * trouble, `clockRef` accumulates how long playback has actually been stuck,
+   * and `recovering` is the label shown while the ladder works. These live in
+   * refs so the polling timer can read and update them without being torn down
+   * and rebuilt on every tick.
    */
   const [recovering, setRecovering] = useState<string | null>(null)
   const recoveryAttempts = useRef(0)
-  const stalledSince = useRef<number | null>(null)
   /** True once playback has produced frames for this source. */
   const playedOnce = useRef(false)
   /** Avoids re-running the same rung if a timer tick lands twice. */
   const lastAction = useRef<RecoveryAction | null>(null)
+  /**
+   * Accumulated stall time. Deliberately NOT reset by media events: a stream
+   * that plays for a second and stalls again fires `playing`/`canplay` every
+   * cycle, so an event-driven reset would zero the ladder forever and the
+   * spinner would never escalate.
+   */
+  const clockRef = useRef<StallClock>(newClock())
+  /**
+   * Bumping this rebuilds the hls.js instance, which is the recovery that
+   * actually works on a stream hls.js has already given up on.
+   */
+  const [rebuildNonce, setRebuildNonce] = useState(0)
+  /** Position to restore after a rebuild, so recovery does not lose the place. */
+  const resumeAt = useRef<number | null>(null)
+  /**
+   * Whether to start playing again after a rebuild. Destroying the hls.js
+   * instance detaches the media and leaves the element paused, so without this
+   * a successful rebuild would sit there buffered and silent.
+   */
+  const resumePlayback = useRef(false)
 
   const saved = useMemo(() => get(animeId, type), [get, animeId, type])
 
@@ -322,6 +347,10 @@ export default function Player({
     setResumed(false)
     networkRetries.current = 0
 
+    // Set by the watchdog when it rebuilds, so recovery resumes in place. Null
+    // for a normal source change, where the saved-position effect handles it.
+    const restoreTo = resumeAt.current
+
     if (hlsRef.current) {
       hlsRef.current.destroy()
       hlsRef.current = null
@@ -364,6 +393,16 @@ export default function Player({
     hlsRef.current = hls
 
     hls.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
+      // A recovery rebuild must land back where the viewer was, and keep
+      // playing — the element comes back paused after a destroy.
+      if (restoreTo != null && restoreTo > 1) {
+        video.currentTime = restoreTo
+      }
+      if (resumePlayback.current) {
+        void video.play().catch(() => {
+          /* autoplay blocked; the centre play button remains */
+        })
+      }
       const lvls = data.levels.map((l, i) => ({
         index: i,
         label: l.height ? `${l.height}p` : `${Math.round((l.bitrate ?? 0) / 1000)}kbps`,
@@ -391,28 +430,19 @@ export default function Player({
         networkRetries.current += 1
         if (networkRetries.current <= 1) {
           hls.startLoad()
-          return
         }
-        hls.destroy()
-        hlsRef.current = null
-        if (payload?.embedUrl) {
-          setEmbedFallback(true)
-          return
-        }
-        onFatalError?.('This episode could not be played — the stream source refused the request.')
+        // Do not destroy the instance or swap to the embed here. The stall
+        // watchdog owns recovery and escalates on a clock, and destroying the
+        // instance behind its back left it with nothing to act on — which is
+        // how a fatal error still ended in an endless spinner.
         return
       }
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
         hls.recoverMediaError()
         return
       }
-      hls.destroy()
-      hlsRef.current = null
-      if (payload?.embedUrl) {
-        setEmbedFallback(true)
-        return
-      }
-      onFatalError?.('This episode could not be played.')
+      // Unrecoverable by hls.js, but the ladder may still rebuild the instance.
+      return
     })
 
     hls.loadSource(src)
@@ -422,7 +452,7 @@ export default function Player({
       hls.destroy()
       hlsRef.current = null
     }
-  }, [activeSource, videoEl, payload?.embedUrl])
+  }, [activeSource, videoEl, payload?.embedUrl, rebuildNonce])
 
   // A new episode or source gets a fresh attempt at the native player before
   // falling back, so one bad episode does not pin the whole session to a frame.
@@ -433,53 +463,106 @@ export default function Player({
   /**
    * Stall watchdog.
    *
-   * hls.js gives up silently after its own fragment retries are exhausted: the
-   * element stays in `waiting`, never fires `playing`, and the viewer is left
+   * hls.js retries a failed fragment a few times and then stops: the element
+   * stays in `waiting`, `playing` never fires again, and the viewer is left
    * with a spinner and no way forward except a manual refresh. This polls while
-   * a stall is in progress and drives the recovery ladder in lib/watchdog.ts,
-   * escalating from a fragment reload up to a full hls.js rebuild — which is
+   * playback is stuck and drives the recovery ladder in lib/watchdog.ts,
+   * escalating from a fragment reload to a full hls.js rebuild — which is
    * exactly what the refresh was doing by hand.
+   *
+   * Progress is measured by whether the playhead moved, not by media events.
+   * A stuttering stream fires `playing`, `canplay` and `timeupdate` every few
+   * seconds while making no real progress, so an event-driven reset would zero
+   * the ladder forever and the spinner would never escalate. `clockRef`
+   * accumulates trouble across those blips and only clears after sustained
+   * playback.
    */
   useEffect(() => {
     const video = videoEl
     if (!video || !activeSource || embedFallback) return
 
-    const hls = () => hlsRef.current
+    let lastTime = video.currentTime
+    let lastTick = Date.now()
 
-    const runAction = (action: RecoveryAction) => {
-      const h = hls()
-      if (!h) return
+    const tick = () => {
+      const now = Date.now()
+      const delta = now - lastTick
+      lastTick = now
+
+      // The playhead is the only trustworthy progress signal.
+      const moved = video.currentTime - lastTime
+      lastTime = video.currentTime
+      const progressed = moved > 0.05 && !video.paused && !video.seeking
+
+      const hadTrouble = clockRef.current.troubleMs > 0
+      clockRef.current = advanceClock(clockRef.current, progressed, delta)
+      const clock = clockRef.current
+
+      // Sustained playback ends the trouble episode, so the ladder starts over
+      // for the next stall. Scoping the attempts here — rather than to a
+      // rebuild — is what stops a rebuild from re-arming itself forever.
+      if (hadTrouble && clock.troubleMs === 0) {
+        recoveryAttempts.current = 0
+        lastAction.current = null
+      }
+
+      const action = decideRecovery({
+        started: playedOnce.current,
+        attempt: recoveryAttempts.current,
+        elapsedMs: clock.troubleMs,
+      })
+
+      if (action === 'wait') {
+        // Count the current uninterrupted freeze, so the viewer sees a live
+        // number rather than a mute spinner that reads as a freeze.
+        if (clock.freezeMs >= 3000) {
+          setRecovering(`Reconnecting… ${Math.floor(clock.freezeMs / 1000)}s`)
+        } else {
+          // Playback is moving again, so the notice must come down. Without
+          // this the label is sticky: it appears once and stays up for the rest
+          // of the episode, which reads as a permanent stall. The functional
+          // form lets React bail out when it is already null, so a clean
+          // playback tick does not re-render.
+          setRecovering((r) => (r === null ? r : null))
+        }
+        return
+      }
+      if (action === lastAction.current) return
+      recoveryAttempts.current += 1
+      setRecovering('Reconnecting…')
+
+      const h = hlsRef.current
       switch (action) {
         case 'reload':
-          // Re-request from the current position. Cheapest fix, and it clears
-          // the common case where one fragment request was dropped.
-          h.startLoad()
+          // Cheapest fix, and it clears the common case where one fragment
+          // request was dropped.
+          if (h) h.startLoad()
+          else setRebuildNonce((n) => n + 1)
           break
-        case 'reload-source':
-          // Re-fetch the playlist, which also re-resolves the tunnel URL.
-          h.loadSource(activeSource.url)
-          break
-        case 'switch-quality':
-          // A single bad rendition stalls every fragment; moving to another one
-          // is often the difference between "stuck" and "playing".
-          {
-            const next = h.levels.findIndex((_, i) => i !== h.currentLevel)
-            if (next >= 0) {
-              h.currentLevel = next
-              h.startLoad()
-            }
+        case 'rebuild':
+          // The manual refresh, minus the page load. This is the rung that
+          // clears a stream hls.js has already given up on, because it replaces
+          // the fragment loader rather than nudging the stopped one.
+          resumeAt.current = video.currentTime
+          resumePlayback.current = !video.paused
+          if (h) {
+            h.destroy()
+            hlsRef.current = null
           }
+          setRebuildNonce((n) => n + 1)
           break
         case 'escalate':
-          h.destroy()
-          hlsRef.current = null
+          if (h) {
+            h.destroy()
+            hlsRef.current = null
+          }
           setRecovering(null)
           if (payload?.embedUrl) {
             setEmbedFallback(true)
             return
           }
           onFatalError?.(
-            'This stream stopped responding and could not be recovered. Reload the page or try another episode.',
+            'This stream stopped responding and could not be recovered. Try another episode.',
           )
           break
         default:
@@ -488,81 +571,34 @@ export default function Player({
       lastAction.current = action
     }
 
-    const tick = () => {
-      if (stalledSince.current == null) return
-      const elapsed = Date.now() - stalledSince.current
-      const action = decideRecovery({
-        started: playedOnce.current,
-        attempt: recoveryAttempts.current,
-        elapsedMs: elapsed,
-        hasAlternateQuality: (hls()?.levels.length ?? 0) > 1,
-      })
-      if (action === 'wait') {
-        // Keep the viewer informed with a live counter instead of a mute
-        // spinner, which is what made a stall look like a freeze.
-        const secs = Math.floor(elapsed / 1000)
-        if (secs >= 3) setRecovering(`Reconnecting… ${secs}s`)
-        return
-      }
-      if (action === lastAction.current) return
-      recoveryAttempts.current += 1
-      setRecovering('Reconnecting…')
-      runAction(action)
-    }
-
-    const begin = () => {
-      // A stall already in progress is not restarted by a second event: `waiting`
-      // fires repeatedly while buffering, and resetting the clock each time
-      // would mean the ladder never advances.
-      if (stalledSince.current != null) return
-      stalledSince.current = Date.now()
-      lastAction.current = null
-      // The attempt count is per stall, not per source: once a stall is
-      // resolved the next one gets the full ladder again.
-      recoveryAttempts.current = 0
-    }
-
-    const end = () => {
-      stalledSince.current = null
-      recoveryAttempts.current = 0
-      lastAction.current = null
-      setRecovering(null)
-    }
-
-    const onPlaying = () => {
-      playedOnce.current = true
-      end()
-    }
-    // `canplay` means enough data is buffered to render, which is a real
-    // recovery even if autoplay is blocked and `playing` never fires.
-    const onCanPlay = () => end()
-
-    video.addEventListener('waiting', begin)
-    video.addEventListener('stalled', begin)
-    video.addEventListener('playing', onPlaying)
-    video.addEventListener('canplay', onCanPlay)
-    video.addEventListener('timeupdate', end)
-
-    const timer = setInterval(tick, 1000)
-
-    return () => {
-      clearInterval(timer)
-      video.removeEventListener('waiting', begin)
-      video.removeEventListener('stalled', begin)
-      video.removeEventListener('playing', onPlaying)
-      video.removeEventListener('canplay', onCanPlay)
-      video.removeEventListener('timeupdate', end)
-    }
+    const timer = setInterval(tick, 500)
+    return () => clearInterval(timer)
   }, [videoEl, activeSource, embedFallback, payload?.embedUrl, onFatalError])
 
-  // A new source starts with a clean ladder and no stale banner.
+  // A new source starts with a clean ladder and no stale banner. Without this,
+  // trouble accumulated on the previous episode would leak into the next one.
   useEffect(() => {
     playedOnce.current = false
     recoveryAttempts.current = 0
-    stalledSince.current = null
     lastAction.current = null
+    clockRef.current = newClock()
+    resumeAt.current = null
+    resumePlayback.current = false
     setRecovering(null)
   }, [episode, activeSource?.url])
+
+  // Track whether frames have ever been produced, so the ladder knows whether
+  // it is protecting live playback or waiting on a cold start.
+  useEffect(() => {
+    const video = videoEl
+    if (!video) return
+    const onPlaying = () => {
+      playedOnce.current = true
+    }
+    video.addEventListener('playing', onPlaying)
+    return () => video.removeEventListener('playing', onPlaying)
+  }, [videoEl])
+
 
   // Resume from the stored position once metadata is known.
   useEffect(() => {

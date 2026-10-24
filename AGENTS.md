@@ -492,35 +492,58 @@ in `waiting`, `playing` never fires again, and the UI sits on a spinner forever 
 so the only way out was a manual refresh, which worked purely because it rebuilt
 the hls.js instance. `lib/watchdog.ts` now does that rebuild for the viewer.
 
-The ladder lives in that module rather than in the component so it can be tested
-without a browser. It escalates `reload` → `reload-source` → `switch-quality` →
-`escalate`, and **each rung is strictly stronger than the last**: an already-spent
-rung is never chosen again, so `attempt` acts as a floor on the scan. A repeat
-rung is not a harmless retry, it is a rung that cannot make progress, which is
-the original bug wearing a progress bar.
+**Progress is measured by the playhead, not by media events.** This is the part
+that is easy to get wrong. A struggling stream fires `playing`, `canplay` and
+`timeupdate` every few seconds while making no real progress. An event-driven
+"recovered!" reset therefore zeroes the ladder on every blip, the ladder never
+escalates, and the spinner runs forever — the original bug, intact, behind a
+counter. `StallClock` accumulates *trouble* across those blips and only clears
+after `HEALTHY_RESET_MS` (10s) of continuous movement. Verify any change here
+against a stuttering stream, not a clean one.
 
-Two ladders, because the right patience depends on what is at stake:
+The ladder is `reload` → `rebuild` → `escalate`, and **each rung is strictly
+stronger than the last**: a spent rung is never chosen again, so `attempt` acts
+as a floor on the scan. A repeat rung is not a harmless retry, it is a rung that
+cannot make progress.
 
-- **Mid-playback** (frames have been produced) gets the long ladder. The source
-  is known good, so a hiccup is more likely transient than fatal, and a viewer
-  would rather wait than be bounced out of the episode.
-- **Cold start** (no frames yet) gets a shorter, faster ladder. There is no
-  playback to protect, and the embed is the more likely fix, so waiting only
-  delays it.
+`rebuild` is the rung that matters. hls.js stops its fragment loader when it
+gives up, so `startLoad()` on that instance does nothing; only a fresh instance
+recovers. That is why the ladder destroys and reconstructs hls.js via
+`rebuildNonce` instead of only nudging it.
+
+A rebuild must be invisible to the viewer, which takes two things:
+
+- **Position.** `resumeAt` captures the playhead before the destroy and seeks
+  back on `MANIFEST_PARSED`. Do not capture it in the hls setup effect: that also
+  runs on an episode change, where `currentTime` still belongs to the previous
+  episode and would resume the new one at the wrong place.
+- **Playback.** `destroy()` detaches the media and leaves the element paused, so
+  `resumePlayback` re-issues `play()` after the rebuild. Without it a successful
+  recovery sits there buffered and silent.
+
+Two ladders, because the right patience depends on what is at stake. A stall
+after frames have been produced gets its first rungs sooner (6s, 15s) — the
+source is known good, so the viewer should not wait on a spinner that has already
+failed once. A cold start waits slightly longer (8s, 22s) because filling a
+first buffer legitimately takes time. Both hand off at ~45s, so a dead stream
+resolves to the embed at a predictable point rather than spinning.
 
 `escalate` is a handoff, not an error: it switches to the provider's embed when
 one exists, and only reports a failure when there is nothing to hand off to.
-A permanent outage therefore terminates at ~50 s instead of spinning forever.
 
 The countdown shown during recovery is the point of the feature. A bare spinner
 is indistinguishable from a freeze — that is exactly why the stall used to be
 met with a refresh. The label is rendered with `uppercase`, so any test asserting
-on it must match case-insensitively.
+on it must match case-insensitively. It must also be **cleared when playback
+resumes**: a sticky label that never comes down reads as a permanent stall.
 
-Rungs that cannot act are skipped rather than spent, so a single-rendition source
-does not burn the quality switch. Non-finite input is treated as "no time has
-passed" rather than "very long", so a broken clock cannot jump straight to the
-handoff rung.
+The hls `ERROR` handler deliberately does **not** destroy the instance or swap to
+the embed. It used to, which left the watchdog with nothing to act on (its
+`hlsRef.current` was already null) so a fatal error still ended in a spin.
+Recovery is the watchdog's job and it escalates on a clock.
+
+Non-finite input is treated as "no time has passed" rather than "very long", so a
+broken clock cannot jump straight to the handoff rung.
 
 ### Bound every upstream hop
 
