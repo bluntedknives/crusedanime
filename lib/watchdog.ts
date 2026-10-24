@@ -57,7 +57,7 @@ const LADDER_STARTED: readonly RecoveryAction[] = ['reload', 'rebuild', 'escalat
 const LADDER_COLD: readonly RecoveryAction[] = ['reload', 'rebuild', 'escalate']
 
 const THRESHOLDS_STARTED = [6_000, 15_000, 45_000] as const
-const THRESHOLDS_COLD = [8_000, 22_000, 45_000] as const
+const THRESHOLDS_COLD = [8_000, 20_000, 35_000] as const
 
 export function recoveryLadder(started: boolean): readonly RecoveryAction[] {
   return started ? LADDER_STARTED : LADDER_COLD

@@ -28,6 +28,19 @@ import {
   type StallClock,
 } from '@/lib/watchdog'
 
+/**
+ * How long the proxied manifest has to answer before the embedded player is
+ * used instead.
+ *
+ * Sized above a cold manifest fetch (measured at ~14s before the tunnel is
+ * warm, milliseconds after) so a slow-but-working source is not mistaken for a
+ * dead one, and below the server's own `CHAIN_BUDGET_MS` so a hung request is
+ * caught rather than waited out. Erring here is asymmetric and deliberate: a
+ * false positive shows the embed, which works, while a false negative leaves
+ * the viewer on a spinner.
+ */
+const PROBE_TIMEOUT_MS = 20_000
+
 export interface PlayerSource {
   url: string
   quality: string
@@ -260,13 +273,24 @@ export default function Player({
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch(activeSource.url, { signal: ctrl.signal })
+        // The probe needs its own deadline. A host that cannot serve the
+        // proxied source often does not reject the request — it accepts it and
+        // never answers, which leaves hls.js loading with no error and the
+        // viewer on a spinner until the stall ladder eventually gives up.
+        // Bounding the probe turns that silent hang into an immediate handoff.
+        const res = await fetch(activeSource.url, {
+          signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(PROBE_TIMEOUT_MS)]),
+        })
         // Consume/cancel the body: only the status matters here, and a playlist
         // is small enough that leaving it unread would leak a connection.
         await res.body?.cancel().catch(() => {})
         if (!res.ok && !cancelled) setEmbedFallback(true)
-      } catch {
-        // Network failure or abort; hls.js gets its own attempt either way.
+      } catch (err) {
+        // A timeout means the manifest never answered, which is a real failure
+        // and exactly the case the embed exists for. A user navigation surfaces
+        // as an abort, and must stay silent.
+        if (cancelled || ctrl.signal.aborted) return
+        if ((err as Error).name === 'TimeoutError') setEmbedFallback(true)
       }
     })()
     return () => {
@@ -430,18 +454,28 @@ export default function Player({
         networkRetries.current += 1
         if (networkRetries.current <= 1) {
           hls.startLoad()
+          return
         }
-        // Do not destroy the instance or swap to the embed here. The stall
-        // watchdog owns recovery and escalates on a clock, and destroying the
-        // instance behind its back left it with nothing to act on — which is
-        // how a fatal error still ended in an endless spinner.
+        // A fatal error is definitive: hls.js has stopped and the source is
+        // refusing us, so hand off immediately rather than making the viewer
+        // sit through the stall ladder. On a host where the proxied source
+        // cannot play at all (see "Stream URLs are bound to the requesting
+        // IP"), this is the difference between the embed appearing in seconds
+        // and the viewer waiting out the full 45s budget.
+        hls.destroy()
+        hlsRef.current = null
+        if (payload?.embedUrl) {
+          setEmbedFallback(true)
+          return
+        }
+        onFatalError?.('This episode could not be played — the stream source refused the request.')
         return
       }
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
         hls.recoverMediaError()
         return
       }
-      // Unrecoverable by hls.js, but the ladder may still rebuild the instance.
+      // Anything else: the ladder can still try a rebuild before giving up.
       return
     })
 

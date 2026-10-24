@@ -525,7 +525,7 @@ Two ladders, because the right patience depends on what is at stake. A stall
 after frames have been produced gets its first rungs sooner (6s, 15s) — the
 source is known good, so the viewer should not wait on a spinner that has already
 failed once. A cold start waits slightly longer (8s, 22s) because filling a
-first buffer legitimately takes time. Both hand off at ~45s, so a dead stream
+first buffer legitimately takes time. Playback stalls hand off at 45s and cold starts at 35s, so a dead stream
 resolves to the embed at a predictable point rather than spinning.
 
 `escalate` is a handoff, not an error: it switches to the provider's embed when
@@ -537,10 +537,22 @@ met with a refresh. The label is rendered with `uppercase`, so any test assertin
 on it must match case-insensitively. It must also be **cleared when playback
 resumes**: a sticky label that never comes down reads as a permanent stall.
 
-The hls `ERROR` handler deliberately does **not** destroy the instance or swap to
-the embed. It used to, which left the watchdog with nothing to act on (its
-`hlsRef.current` was already null) so a fatal error still ended in a spin.
-Recovery is the watchdog's job and it escalates on a clock.
+The hls `ERROR` handler splits the two cases, because they are not the same
+thing. A **fatal** network error is definitive — hls.js has stopped and the
+source is refusing us — so it hands off to the embed immediately. A **stall** is
+only a suspicion, so it belongs to the watchdog, which escalates on a clock. The
+fatal path must keep its own handoff: routing it through the ladder made every
+production viewer wait out the full budget before the embed appeared, because
+the proxied source cannot play there at all (see "Stream URLs are bound to the
+requesting IP").
+
+The probe effect that checks the source before handing it to hls.js needs its own
+deadline. A host that cannot serve the proxied source often does not reject the
+request — it accepts it and never answers, so hls.js sits at `readyState` 0 with
+no error and the viewer watches a spinner until the ladder gives up. The deadline
+is deliberately generous (~20s, above a measured ~14s cold manifest fetch) and
+erring is asymmetric on purpose: a false positive shows the embed, which works,
+while a false negative leaves the viewer spinning.
 
 Non-finite input is treated as "no time has passed" rather than "very long", so a
 broken clock cannot jump straight to the handoff rung.
