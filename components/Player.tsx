@@ -20,6 +20,7 @@ import {
   IconVolumeMute,
 } from './icons'
 import { usePrefs, useProgress, formatTime } from '@/lib/store'
+import { decideRecovery, type RecoveryAction } from '@/lib/watchdog'
 
 export interface PlayerSource {
   url: string
@@ -183,9 +184,28 @@ export default function Player({
   const [uiVisible, setUiVisible] = useState(true)
   const [waiting, setWaiting] = useState(false)
   const [inPip, setInPip] = useState(false)
+  /** Set once a resolve has taken long enough to be worth narrating. */
+  const [resolveSlow, setResolveSlow] = useState(false)
   /** Seconds until the next episode starts; null when not counting down. */
   const [nextIn, setNextIn] = useState<number | null>(null)
   const autoNextTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  /**
+   * Stall recovery.
+   *
+   * `attempts` counts the recovery rungs already spent on the current stall,
+   * `stalledSince` is the wall-clock start of that stall, and `recovering` is
+   * the label shown to the viewer while the ladder works. Keeping the count in
+   * a ref means the polling timer can read it without being torn down and
+   * rebuilt on every attempt.
+   */
+  const [recovering, setRecovering] = useState<string | null>(null)
+  const recoveryAttempts = useRef(0)
+  const stalledSince = useRef<number | null>(null)
+  /** True once playback has produced frames for this source. */
+  const playedOnce = useRef(false)
+  /** Avoids re-running the same rung if a timer tick lands twice. */
+  const lastAction = useRef<RecoveryAction | null>(null)
 
   const saved = useMemo(() => get(animeId, type), [get, animeId, type])
 
@@ -234,6 +254,16 @@ export default function Player({
     setToast(msg)
     setTimeout(() => setToast(null), ms)
   }, [])
+
+  // Narrate a slow resolve rather than spinning mutely.
+  useEffect(() => {
+    if (!loading) {
+      setResolveSlow(false)
+      return
+    }
+    const t = setTimeout(() => setResolveSlow(true), 6000)
+    return () => clearTimeout(t)
+  }, [loading])
 
   /*
    * Restore volume/mute/speed. Deliberately an effect rather than a lazy
@@ -398,6 +428,140 @@ export default function Player({
   // falling back, so one bad episode does not pin the whole session to a frame.
   useEffect(() => {
     setEmbedFallback(false)
+  }, [episode, activeSource?.url])
+
+  /**
+   * Stall watchdog.
+   *
+   * hls.js gives up silently after its own fragment retries are exhausted: the
+   * element stays in `waiting`, never fires `playing`, and the viewer is left
+   * with a spinner and no way forward except a manual refresh. This polls while
+   * a stall is in progress and drives the recovery ladder in lib/watchdog.ts,
+   * escalating from a fragment reload up to a full hls.js rebuild — which is
+   * exactly what the refresh was doing by hand.
+   */
+  useEffect(() => {
+    const video = videoEl
+    if (!video || !activeSource || embedFallback) return
+
+    const hls = () => hlsRef.current
+
+    const runAction = (action: RecoveryAction) => {
+      const h = hls()
+      if (!h) return
+      switch (action) {
+        case 'reload':
+          // Re-request from the current position. Cheapest fix, and it clears
+          // the common case where one fragment request was dropped.
+          h.startLoad()
+          break
+        case 'reload-source':
+          // Re-fetch the playlist, which also re-resolves the tunnel URL.
+          h.loadSource(activeSource.url)
+          break
+        case 'switch-quality':
+          // A single bad rendition stalls every fragment; moving to another one
+          // is often the difference between "stuck" and "playing".
+          {
+            const next = h.levels.findIndex((_, i) => i !== h.currentLevel)
+            if (next >= 0) {
+              h.currentLevel = next
+              h.startLoad()
+            }
+          }
+          break
+        case 'escalate':
+          h.destroy()
+          hlsRef.current = null
+          setRecovering(null)
+          if (payload?.embedUrl) {
+            setEmbedFallback(true)
+            return
+          }
+          onFatalError?.(
+            'This stream stopped responding and could not be recovered. Reload the page or try another episode.',
+          )
+          break
+        default:
+          break
+      }
+      lastAction.current = action
+    }
+
+    const tick = () => {
+      if (stalledSince.current == null) return
+      const elapsed = Date.now() - stalledSince.current
+      const action = decideRecovery({
+        started: playedOnce.current,
+        attempt: recoveryAttempts.current,
+        elapsedMs: elapsed,
+        hasAlternateQuality: (hls()?.levels.length ?? 0) > 1,
+      })
+      if (action === 'wait') {
+        // Keep the viewer informed with a live counter instead of a mute
+        // spinner, which is what made a stall look like a freeze.
+        const secs = Math.floor(elapsed / 1000)
+        if (secs >= 3) setRecovering(`Reconnecting… ${secs}s`)
+        return
+      }
+      if (action === lastAction.current) return
+      recoveryAttempts.current += 1
+      setRecovering('Reconnecting…')
+      runAction(action)
+    }
+
+    const begin = () => {
+      // A stall already in progress is not restarted by a second event: `waiting`
+      // fires repeatedly while buffering, and resetting the clock each time
+      // would mean the ladder never advances.
+      if (stalledSince.current != null) return
+      stalledSince.current = Date.now()
+      lastAction.current = null
+      // The attempt count is per stall, not per source: once a stall is
+      // resolved the next one gets the full ladder again.
+      recoveryAttempts.current = 0
+    }
+
+    const end = () => {
+      stalledSince.current = null
+      recoveryAttempts.current = 0
+      lastAction.current = null
+      setRecovering(null)
+    }
+
+    const onPlaying = () => {
+      playedOnce.current = true
+      end()
+    }
+    // `canplay` means enough data is buffered to render, which is a real
+    // recovery even if autoplay is blocked and `playing` never fires.
+    const onCanPlay = () => end()
+
+    video.addEventListener('waiting', begin)
+    video.addEventListener('stalled', begin)
+    video.addEventListener('playing', onPlaying)
+    video.addEventListener('canplay', onCanPlay)
+    video.addEventListener('timeupdate', end)
+
+    const timer = setInterval(tick, 1000)
+
+    return () => {
+      clearInterval(timer)
+      video.removeEventListener('waiting', begin)
+      video.removeEventListener('stalled', begin)
+      video.removeEventListener('playing', onPlaying)
+      video.removeEventListener('canplay', onCanPlay)
+      video.removeEventListener('timeupdate', end)
+    }
+  }, [videoEl, activeSource, embedFallback, payload?.embedUrl, onFatalError])
+
+  // A new source starts with a clean ladder and no stale banner.
+  useEffect(() => {
+    playedOnce.current = false
+    recoveryAttempts.current = 0
+    stalledSince.current = null
+    lastAction.current = null
+    setRecovering(null)
   }, [episode, activeSource?.url])
 
   // Resume from the stored position once metadata is known.
@@ -840,6 +1004,13 @@ export default function Player({
           <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-zinc-500">
             Resolving stream
           </p>
+          {/* The provider can take a while. Saying so up front stops a slow
+              resolve from reading as a broken page. */}
+          {resolveSlow && (
+            <p className="max-w-xs text-center text-xs text-zinc-500">
+              Still contacting the provider — this can take a few seconds.
+            </p>
+          )}
         </div>
       </div>
     )
@@ -902,10 +1073,19 @@ export default function Player({
         ))}
       </video>
 
-      {/* Buffering indicator */}
-      {waiting && !error && (
+      {/* Buffering / stall-recovery indicator. The counter is the important
+          part: a bare spinner is indistinguishable from a freeze, which is why
+          a stall used to be met with a manual refresh. */}
+      {(waiting || recovering) && !error && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
-          <IconSpinner size={36} className="animate-spin text-white/80" />
+          <div className="flex flex-col items-center gap-2.5">
+            <IconSpinner size={36} className="animate-spin text-white/80" />
+            {recovering && (
+              <p className="rounded-full border border-white/10 bg-black/80 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-zinc-300">
+                {recovering}
+              </p>
+            )}
+          </div>
         </div>
       )}
 

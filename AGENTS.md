@@ -232,6 +232,16 @@ with Cancel and Play now, instead of jumping with no chance to stop it.
 Repeat views of the same episode collapse in history; `/api/stream?warm=1` is
 fired from `WarmStream` on a detail page to pre-resolve the first episode.
 
+**Never leave a spinner with no exit.** Two places used to hang indefinitely, and
+both needed a refresh the viewer had no way to know about:
+
+- A mid-playback stall — see "A stall must recover, not spin" below.
+- The resolve itself. `/api/stream` is now called with a 45 s deadline, because
+  the provider occasionally accepts the connection and never answers. Both a
+  timeout and a user navigation surface as an abort, so the handler checks
+  `signal.aborted` first and treats a `TimeoutError` as a real failure; treating
+  every abort as "the viewer left" is what would leave the spinner up forever.
+
 ## Restricted mode (the neutral cover)
 
 An opt-in state, toggled in Settings, stored in the `cover` cookie. It relabels
@@ -474,6 +484,43 @@ Two traps worth remembering:
 - The `waiting`-driven spinner is not evidence of loading. It shows whenever
   playback has stalled, so an upstream rejection looks identical to buffering.
   Check `/api/hls` status before believing the player is still working.
+
+### A stall must recover, not spin
+
+hls.js retries a failed fragment a few times and then stops. The element stays
+in `waiting`, `playing` never fires again, and the UI sits on a spinner forever —
+so the only way out was a manual refresh, which worked purely because it rebuilt
+the hls.js instance. `lib/watchdog.ts` now does that rebuild for the viewer.
+
+The ladder lives in that module rather than in the component so it can be tested
+without a browser. It escalates `reload` → `reload-source` → `switch-quality` →
+`escalate`, and **each rung is strictly stronger than the last**: an already-spent
+rung is never chosen again, so `attempt` acts as a floor on the scan. A repeat
+rung is not a harmless retry, it is a rung that cannot make progress, which is
+the original bug wearing a progress bar.
+
+Two ladders, because the right patience depends on what is at stake:
+
+- **Mid-playback** (frames have been produced) gets the long ladder. The source
+  is known good, so a hiccup is more likely transient than fatal, and a viewer
+  would rather wait than be bounced out of the episode.
+- **Cold start** (no frames yet) gets a shorter, faster ladder. There is no
+  playback to protect, and the embed is the more likely fix, so waiting only
+  delays it.
+
+`escalate` is a handoff, not an error: it switches to the provider's embed when
+one exists, and only reports a failure when there is nothing to hand off to.
+A permanent outage therefore terminates at ~50 s instead of spinning forever.
+
+The countdown shown during recovery is the point of the feature. A bare spinner
+is indistinguishable from a freeze — that is exactly why the stall used to be
+met with a refresh. The label is rendered with `uppercase`, so any test asserting
+on it must match case-insensitively.
+
+Rungs that cannot act are skipped rather than spent, so a single-rendition source
+does not burn the quality switch. Non-finite input is treated as "no time has
+passed" rather than "very long", so a broken clock cannot jump straight to the
+handoff rung.
 
 ### Bound every upstream hop
 

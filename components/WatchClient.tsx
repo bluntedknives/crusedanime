@@ -111,7 +111,14 @@ export default function WatchClient({
       altTitles.slice(0, 3).forEach((a) => params.append('alt', a))
 
       try {
-        const res = await fetch(`/api/stream?${params.toString()}`, { signal })
+        // The provider is a third party and occasionally just never answers.
+        // Without a deadline the UI sits on "Resolving stream" indefinitely,
+        // which is the same refresh-to-fix symptom as a mid-playback stall.
+        const timeout = AbortSignal.timeout(45_000)
+        const signalOrTimeout = AbortSignal.any
+          ? AbortSignal.any([signal, timeout])
+          : signal
+        const res = await fetch(`/api/stream?${params.toString()}`, { signal: signalOrTimeout })
         const data = await res.json()
         if (!res.ok) throw new Error(data?.error ?? `stream request failed (${res.status})`)
         // An embed-only payload has no sources by design: the provider's own
@@ -133,6 +140,14 @@ export default function WatchClient({
           embedUrl: data.embedUrl ?? null,
         })
       } catch (err) {
+        // Distinguish "the viewer navigated away" from "the provider ran out of
+        // time". Both surface as an abort, but only the first should stay
+        // silent — swallowing the second would leave the spinner up forever.
+        if (signal.aborted) return
+        if ((err as Error).name === 'TimeoutError') {
+          setError('The stream provider took too long to respond. Try again.')
+          return
+        }
         if ((err as Error).name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Could not resolve a stream')
       } finally {
