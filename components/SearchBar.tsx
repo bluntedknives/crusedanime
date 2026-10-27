@@ -75,6 +75,8 @@ export default function SearchBar({
   const [value, setValue] = useState(initialQuery)
   const [open, setOpen] = useState(false)
   const [suggestions, setSuggestions] = useState<Media[]>([])
+  const [people, setPeople] = useState<{ id: number; name: string; image: string | null }[]>([])
+  const [studioHits, setStudioHits] = useState<{ id: number; name: string }[]>([])
   const [recent, setRecent] = useState<string[]>([])
   const [active, setActive] = useState(-1)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -114,18 +116,22 @@ export default function SearchBar({
     const term = value.trim()
     if (term.length < 2) {
       setSuggestions([])
+      setPeople([])
+      setStudioHits([])
       return
     }
     const ctrl = new AbortController()
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(term)}&limit=8`, {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(term)}&limit=8&deep=1`, {
           signal: ctrl.signal,
         })
         const data = await res.json()
-        // Films and series are ranked in among the anime so a title from either
-        // catalogue can be the top hit.
-        setSuggestions((data.results ?? []).slice(0, 7))
+        setSuggestions((data.results ?? []).slice(0, 6))
+        // Only meaningful when the title list came back thin, which is what
+        // the endpoint already decides; these arrive empty otherwise.
+        setPeople((data.staff ?? []).slice(0, 3))
+        setStudioHits((data.studios ?? []).slice(0, 3))
       } catch {
         /* aborted or failed: leave the previous list */
       }
@@ -237,6 +243,8 @@ export default function SearchBar({
             onClick={() => {
               setValue('')
               setSuggestions([])
+              setPeople([])
+              setStudioHits([])
               onQueryChange('')
               inputRef.current?.focus()
             }}
@@ -262,7 +270,7 @@ export default function SearchBar({
         </button>
       </div>
 
-      {open && (showRecent || suggestions.length > 0) && (
+      {open && (showRecent || suggestions.length > 0 || people.length > 0 || studioHits.length > 0) && (
         <div
           id="search-suggestions"
           role="listbox"
@@ -333,6 +341,45 @@ export default function SearchBar({
                 </li>
               ))}
             </ul>
+          )}
+
+          {(people.length > 0 || studioHits.length > 0) && (
+            <div className="border-t border-white/[0.06] p-1.5">
+              <p className="px-2 py-1 font-mono text-[0.6rem] uppercase tracking-[0.16em] text-zinc-500">
+                People &amp; studios
+              </p>
+              {studioHits.map((st) => (
+                <Link
+                  key={`st-${st.id}`}
+                  href={`/studio/${st.id}`}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2.5 rounded-lg px-2 py-2 transition hover:bg-white/[0.05]"
+                >
+                  <span className="grid h-8 w-8 place-items-center rounded bg-base-750 text-[9px] font-semibold uppercase text-accent-soft">
+                    ST
+                  </span>
+                  <span className="text-sm text-zinc-200">{st.name}</span>
+                  <span className="ml-auto text-[10px] text-zinc-600">Studio</span>
+                </Link>
+              ))}
+              {people.map((p) => (
+                <Link
+                  key={`pp-${p.id}`}
+                  href={`/staff/${p.id}`}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2.5 rounded-lg px-2 py-2 transition hover:bg-white/[0.05]"
+                >
+                  <span className="h-8 w-8 shrink-0 overflow-hidden rounded bg-base-750">
+                    {p.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.image} alt="" className="h-full w-full object-cover" />
+                    ) : null}
+                  </span>
+                  <span className="text-sm text-zinc-200">{p.name}</span>
+                  <span className="ml-auto text-[10px] text-zinc-600">Person</span>
+                </Link>
+              ))}
+            </div>
           )}
         </div>
       )}

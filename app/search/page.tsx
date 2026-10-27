@@ -4,6 +4,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation'
 import { IconGrid, IconList } from '../../components/icons'
 import PosterCard from '@/components/PosterCard'
+import PeopleResults, { type StaffSummary, type StudioSummary } from '@/components/PeopleResults'
+import RecentSearches from '@/components/RecentSearches'
 import AdFooter from '@/components/ads/AdFooter'
 import FilterPanel, {
   EMPTY_FILTERS,
@@ -51,11 +53,22 @@ function SearchView() {
   const [debouncedQ, setDebouncedQ] = useState(initialQ)
   const [filters, setFilters] = useState<FilterState>(() => queryToFilters(sp))
   const [results, setResults] = useState<Media[]>([])
+  const [staff, setStaff] = useState<StaffSummary[]>([])
+  const [studios, setStudios] = useState<StudioSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [hasNext, setHasNext] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState(false)
+  /**
+   * Scope narrows a text search without leaving the page: `titles` is the
+   * default, `people` answers "who is this" and `studio` answers "what did they
+   * make". AniList has no cross-type search, so the scope decides which list is
+   * worth showing rather than filtering one.
+   */
+  const [scope, setScope] = useState<'all' | 'titles' | 'people'>('all')
+
+  const filterCount = useMemo(() => activeFilterCount(filters), [filters])
 
   // Debounce the query so typing does not fire a request per keystroke.
   useEffect(() => {
@@ -84,15 +97,33 @@ function SearchView() {
       setLoading(true)
       setError(null)
       try {
-        const res = await fetch(`/api/anilist?${toApiQuery(filters, debouncedQ, targetPage)}`, {
-          signal,
-        })
+        // The deep endpoint resolves people and studios alongside titles, but
+        // it only understands free text — it cannot apply genre, year or score
+        // filters. So it is used for an unfiltered text search, and anything
+        // narrowed goes to the filtered media query instead.
+        const deepEligible = targetPage === 1 && debouncedQ.length > 0 && filterCount === 0
+        const url = deepEligible
+          ? `/api/search?q=${encodeURIComponent(debouncedQ)}&limit=30&deep=1`
+          : `/api/anilist?${toApiQuery(filters, debouncedQ, targetPage)}`
+
+        const res = await fetch(url, { signal })
         const data = await res.json()
         if (!res.ok) throw new Error(data?.error ?? 'search failed')
-        const list: Media[] = data.media ?? []
-        setPreview(Boolean(data.preview))
-        setResults((prev) => (targetPage === 1 ? list : [...prev, ...list]))
-        setHasNext(Boolean(data.pageInfo?.hasNextPage))
+
+        if (deepEligible) {
+          setPreview(Boolean(data.preview))
+          setStaff(data.staff ?? [])
+          setStudios(data.studios ?? [])
+          setResults(data.results ?? [])
+          setHasNext(false)
+        } else {
+          const list: Media[] = data.media ?? []
+          setPreview(Boolean(data.preview))
+          setStaff([])
+          setStudios([])
+          setResults((prev) => (targetPage === 1 ? list : [...prev, ...list]))
+          setHasNext(Boolean(data.pageInfo?.hasNextPage))
+        }
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Search failed')
@@ -100,7 +131,7 @@ function SearchView() {
         if (!signal.aborted) setLoading(false)
       }
     },
-    [filters, debouncedQ],
+    [filters, debouncedQ, filterCount],
   )
 
   useEffect(() => {
@@ -115,9 +146,6 @@ function SearchView() {
     const ctrl = new AbortController()
     void load(next, ctrl.signal)
   }
-
-  const filterCount = useMemo(() => activeFilterCount(filters), [filters])
-
 
   return (
     <div className="container-page pt-5">
@@ -140,6 +168,14 @@ function SearchView() {
             </div>
           )}
 
+          {debouncedQ ? (
+            <PeopleResults staff={staff} studios={studios} query={debouncedQ} />
+          ) : (
+            <div className="mb-5">
+              <RecentSearches onPick={(q) => setInput(q)} />
+            </div>
+          )}
+
           {/* Result header */}
           <div className="mb-4 flex items-center justify-between gap-3">
             <p className="font-mono text-[0.65rem] uppercase tracking-[0.16em] text-zinc-500">
@@ -149,7 +185,37 @@ function SearchView() {
               {debouncedQ ? ` for “${debouncedQ}”` : ''}
             </p>
 
-            <div className="flex overflow-hidden rounded-lg border border-white/[0.08]">
+            <div className="flex items-center gap-2">
+              {debouncedQ && (
+                <div
+                  role="group"
+                  aria-label="Search scope"
+                  className="flex overflow-hidden rounded-lg border border-white/[0.08]"
+                >
+                  {(
+                    [
+                      { s: 'all' as const, label: 'All' },
+                      { s: 'titles' as const, label: 'Titles' },
+                      { s: 'people' as const, label: 'People' },
+                    ]
+                  ).map(({ s: v, label }) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setScope(v)}
+                      aria-pressed={scope === v}
+                      className={[
+                        'px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+                        scope === v ? 'bg-accent text-black' : 'text-zinc-500 hover:bg-white/[0.06]',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex overflow-hidden rounded-lg border border-white/[0.08]">
               {(
                 [
                   { m: 'grid' as const, Icon: IconGrid, label: 'Grid' },
@@ -169,6 +235,7 @@ function SearchView() {
                   <Icon className="h-4 w-4" strokeWidth={2} />
                 </button>
               ))}
+              </div>
             </div>
           </div>
 
@@ -191,6 +258,30 @@ function SearchView() {
               >
                 Clear everything
               </button>
+            </div>
+          ) : scope === 'people' ? (
+            staff.length || studios.length ? (
+              <p className="text-sm text-zinc-500">
+                People and studios for “{debouncedQ}” are listed above.
+              </p>
+            ) : (
+              <div className="surface grid place-items-center p-12 text-center">
+                <p className="text-sm text-zinc-400">
+                  No people or studios matched “{debouncedQ}”.
+                </p>
+                <button type="button" onClick={() => setScope('all')} className="btn-ghost mt-3 h-9 text-xs">
+                  Show all results
+                </button>
+              </div>
+            )
+          ) : scope === 'titles' && results.length === 0 ? (
+            <div className="surface grid place-items-center p-12 text-center">
+              <p className="text-sm text-zinc-400">No titles matched “{debouncedQ}”.</p>
+              {(staff.length > 0 || studios.length > 0) && (
+                <button type="button" onClick={() => setScope('people')} className="btn-ghost mt-3 h-9 text-xs">
+                  Look at people &amp; studios instead
+                </button>
+              )}
             </div>
           ) : mode === 'grid' ? (
             <div className="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">

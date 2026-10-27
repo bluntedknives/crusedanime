@@ -53,7 +53,12 @@ export async function generateMetadata(): Promise<Metadata> {
       description:
         'Browse, search and stream with AniList metadata. Trending, seasonal, schedules and your own watchlist in one dark-first interface.',
       applicationName: 'crused.wtf',
-      referrer: 'no-referrer',
+      // YouTube refuses to embed when the Referer is absent (it surfaces as
+      // "Video player configuration error", Error 153), so the strictest
+      // policy cannot be used site-wide. `strict-origin-when-cross-origin`
+      // still sends nothing to plain-HTTP destinations and only the bare
+      // origin to other HTTPS hosts — never the full path.
+      referrer: 'strict-origin-when-cross-origin',
     }
   }
   return coverMetadata(

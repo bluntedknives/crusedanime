@@ -93,14 +93,24 @@ export default function HeroSpotlight({ items }: Props) {
               tabIndex={-1}
               aria-hidden="true"
               onError={() => setVideoOk(false)}
-              className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 opacity-45"
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 opacity-85"
             />
           </div>
         )}
 
-        {/* Legibility scrims sit above the video but below the content. */}
-        <div className="absolute inset-0 -z-10 bg-gradient-to-t from-black via-black/80 to-black/25" />
-        <div className="absolute inset-0 -z-10 bg-gradient-to-r from-black/95 via-black/55 to-transparent" />
+        {/* Legibility scrims sit above the video but below the content. They
+            stay light while a trailer is playing so the video is visible, and
+            go heavy over a still backdrop where there is nothing to watch. */}
+        {showVideo ? (
+          // Bottom-only while the trailer runs, so the scrim does not wash out
+          // the middle of the video it is meant to sit behind.
+          <div className="absolute inset-x-0 bottom-0 -z-10 h-1/2 bg-gradient-to-t from-black via-black/65 to-transparent" />
+        ) : (
+          <>
+            <div className="absolute inset-0 -z-10 bg-gradient-to-t from-black via-black/80 to-black/25" />
+            <div className="absolute inset-0 -z-10 bg-gradient-to-r from-black/95 via-black/55 to-transparent" />
+          </>
+        )}
 
         <div className="relative flex min-h-[340px] flex-col justify-end p-5 sm:min-h-[420px] sm:p-8 lg:min-h-[470px] lg:p-10">
           <div className="flex items-end gap-6">

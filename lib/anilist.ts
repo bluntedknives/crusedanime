@@ -406,6 +406,202 @@ query AiringNow($page: Int, $perPage: Int) {
   }
 }`
 
+/* ------------------------------------------------------- deep search (people) */
+
+export interface StaffSummary {
+  id: number
+  name: string
+  image: string | null
+  occupations: string[]
+}
+
+export interface StudioSummary {
+  id: number
+  name: string
+}
+
+export interface DeepSearchResult {
+  page: Page<Media>
+  staff: StaffSummary[]
+  studios: StudioSummary[]
+}
+
+/**
+ * One request, three answer shapes.
+ *
+ * Searching only `media` meant a studio or a director was unreachable by name:
+ * typing "Ufotable" matched nothing even though the studio's work is all here.
+ * Staff and studios are aliased onto the same Page so this stays a single round
+ * trip rather than three.
+ */
+const Q_SEARCH_DEEP = `
+query DeepSearch($search: String, $perPage: Int) {
+  anime: Page(page: 1, perPage: $perPage) {
+    pageInfo { total currentPage lastPage hasNextPage perPage }
+    media(type: ANIME, isAdult: false, search: $search, sort: [SEARCH_MATCH]) { ${MEDIA_CORE} }
+  }
+  staff: Page(page: 1, perPage: 5) {
+    staff(search: $search) {
+      id
+      name { full native }
+      image { large }
+      primaryOccupations
+    }
+  }
+  studios: Page(page: 1, perPage: 5) {
+    studios(search: $search) { id name }
+  }
+}`
+
+export async function searchDeep(
+  filters: SearchFilters = {},
+): Promise<DeepSearchResult> {
+  const q = filters.q?.trim() ?? ''
+  const perPage = Math.min(filters.perPage ?? 24, 50)
+
+  // With filters applied the media query is a browse, not a lookup, so people
+  // and studios would just be noise. Only look them up for a text query.
+  const filtered =
+    Boolean(filters.genres?.length) ||
+    filters.year != null ||
+    Boolean(filters.season) ||
+    Boolean(filters.format) ||
+    Boolean(filters.status) ||
+    filters.scoreMin != null ||
+    Boolean(filters.studio)
+
+  if (!q || filtered) {
+    return { page: await search(filters), staff: [], studios: [] }
+  }
+
+  const d = await gql<{
+    anime: Page<Media>
+    staff: { staff: RawStaff[] }
+    studios: { studios: { id: number; name: string }[] }
+  }>(Q_SEARCH_DEEP, { search: q, perPage }, { ttl: TTL.short })
+
+  const media = d.anime?.media ?? []
+
+  /*
+   * AniList's staff and studio search is fuzzy, so "naruto" comes back with a
+   * handful of crew members who happen to share the name. Surfacing those
+   * beside real results is noise, so people and studios are only offered when
+   * the title search came up nearly empty (the case where a name is the *only*
+   * sensible answer, like "ufotable") and only when the name genuinely contains
+   * the query as a whole word.
+   */
+  const sparse = media.length < 4
+  const wordMatch = (name: string) => {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(^|[^\\p{L}])${escaped}([^\\p{L}]|$)`, 'iu').test(name)
+  }
+
+  return {
+    page: d.anime,
+    staff: !sparse
+      ? []
+      : (d.staff?.staff ?? [])
+          .map((s) => ({
+            id: s.id,
+            name: s.name?.full ?? s.name?.native ?? 'Unknown',
+            image: s.image?.large ?? null,
+            occupations: (s.primaryOccupations ?? [])
+              .filter((o): o is string => Boolean(o))
+              .slice(0, 3),
+          }))
+          .filter((s) => wordMatch(s.name)),
+    studios: !sparse
+      ? []
+      : (d.studios?.studios ?? [])
+          .map((s) => ({ id: s.id, name: s.name }))
+          .filter((s) => wordMatch(s.name)),
+  }
+}
+
+interface RawStaff {
+  id: number
+  name: { full: string | null; native: string | null } | null
+  image: { large: string | null } | null
+  primaryOccupations: (string | null)[] | null
+}
+
+const Q_BY_STAFF = `
+query ByStaff($id: Int, $page: Int, $perPage: Int) {
+  Staff(id: $id) {
+    id
+    name { full native }
+    image { large }
+    description(asHtml: false)
+    primaryOccupations
+    staffMedia(page: $page, perPage: $perPage, type: ANIME, sort: [POPULARITY_DESC]) {
+      pageInfo { total currentPage lastPage hasNextPage perPage }
+      nodes { ${MEDIA_CORE} }
+    }
+  }
+}`
+
+export interface StaffDetail extends StaffSummary {
+  description: string | null
+  media: Page<Media>
+}
+
+export async function byStaff(id: number, page = 1, perPage = 30): Promise<StaffDetail> {
+  const d = await gql<{
+    Staff: {
+      id: number
+      name: { full: string | null; native: string | null } | null
+      image: { large: string | null } | null
+      description: string | null
+      primaryOccupations: (string | null)[] | null
+      staffMedia: { pageInfo: PageInfo; nodes: Media[] }
+    } | null
+  }>(Q_BY_STAFF, { id, page, perPage }, { ttl: TTL.medium })
+
+  const s = d.Staff
+  if (!s) throw new Error('Staff not found')
+  return {
+    id: s.id,
+    name: s.name?.full ?? s.name?.native ?? 'Unknown',
+    image: s.image?.large ?? null,
+    occupations: (s.primaryOccupations ?? []).filter((o): o is string => Boolean(o)).slice(0, 6),
+    description: s.description,
+    // AniList returns `nodes`; the rest of the app reads a page as `.media`.
+    media: { pageInfo: s.staffMedia.pageInfo, media: s.staffMedia.nodes ?? [] },
+  }
+}
+
+const Q_BY_STUDIO = `
+query ByStudio($id: Int, $page: Int, $perPage: Int) {
+  Studio(id: $id) {
+    id
+    name
+    media(page: $page, perPage: $perPage, sort: [POPULARITY_DESC], isMain: true) {
+      pageInfo { total currentPage lastPage hasNextPage perPage }
+      nodes { ${MEDIA_CORE} }
+    }
+  }
+}`
+
+export interface StudioDetail {
+  id: number
+  name: string
+  media: Page<Media>
+}
+
+export async function byStudio(id: number, page = 1, perPage = 30): Promise<StudioDetail> {
+  const d = await gql<{
+    Studio: { id: number; name: string; media: { pageInfo: PageInfo; nodes: Media[] } } | null
+  }>(Q_BY_STUDIO, { id, page, perPage }, { ttl: TTL.medium })
+
+  if (!d.Studio) throw new Error('Studio not found')
+  return {
+    id: d.Studio.id,
+    name: d.Studio.name,
+    // Same `nodes` -> `.media` normalisation as byStaff.
+    media: { pageInfo: d.Studio.media.pageInfo, media: d.Studio.media.nodes ?? [] },
+  }
+}
+
 const Q_SEARCH = `
 query Search(
   $page: Int, $perPage: Int, $search: String,

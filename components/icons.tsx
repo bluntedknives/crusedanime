@@ -127,6 +127,16 @@ export function IconMenu(p: IconProps) {
   )
 }
 
+export function IconDots(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="5.5" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="12" cy="18.5" r="1.4" />
+    </Svg>
+  )
+}
+
 export function IconClose(p: IconProps) {
   return (
     <Svg {...p}>

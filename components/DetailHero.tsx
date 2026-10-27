@@ -73,12 +73,22 @@ export default function DetailHero({ media }: Props) {
               allow="autoplay; encrypted-media"
               tabIndex={-1}
               aria-hidden="true"
-              className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 opacity-40"
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 opacity-85"
             />
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/30" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/40 to-transparent" />
+        {trailerId ? (
+          // With a trailer behind it the content sits along the bottom edge, so
+          // a bottom-only scrim is enough to carry the text. A left-to-right
+          // gradient here would sit across the middle of the video and dim the
+          // part the viewer is actually watching.
+          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black via-black/65 to-transparent" />
+        ) : (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/30" />
+            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/40 to-transparent" />
+          </>
+        )}
       </div>
 
       <div className="container-page">
