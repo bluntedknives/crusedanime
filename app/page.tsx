@@ -6,6 +6,7 @@ import AdRail from '@/components/ads/AdRail'
 import AdFooter from '@/components/ads/AdFooter'
 import PosterCard from '@/components/PosterCard'
 import ContinueWatching from '@/components/ContinueWatching'
+import BecauseYouWatched from '@/components/BecauseYouWatched'
 import HeroSpotlight from '@/components/HeroSpotlight'
 import PreviewBanner from '@/components/PreviewBanner'
 import { MediaRailSkeleton, PosterGridSkeleton } from '@/components/Skeletons'
@@ -41,6 +42,7 @@ async function Rails() {
           rails rather than nested inside one, so it never becomes a second
           child of a `&&` expression. */}
       <AdRail className="mb-8" />
+      <BecauseYouWatched />
       {top.data.length > 0 && (
         <MediaRail
           title="Top rated"

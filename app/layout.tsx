@@ -10,6 +10,9 @@ import InterstitialAd from '@/components/ads/InterstitialAd'
 import PopunderAd from '@/components/ads/PopunderAd'
 import ClickMonetization from '@/components/ads/ClickMonetization'
 import AdBlockPrompt from '@/components/ads/AdBlockPrompt'
+import CommandPalette from '@/components/CommandPalette'
+import ShortcutsHelp from '@/components/ShortcutsHelp'
+import GlobalShortcuts from '@/components/GlobalShortcuts'
 import { coverMetadata, isCovered } from '@/lib/coverServer'
 import { COVER_BRAND } from '@/lib/cover'
 
@@ -91,6 +94,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           see lib/ads/clickMonetization.ts for the pacing rules. */}
       <ClickMonetization />
       <AdBlockPrompt />
+      {/* Global keyboard surfaces. Both render nothing until invoked, and the
+          palette doubles as the top bar's search affordance on desktop. */}
+      <CommandPalette />
+      <ShortcutsHelp />
+      <GlobalShortcuts />
         <Sidebar covered={covered} />
         <div className="lg:pl-[var(--sidebar-w)]">
           <TopBar covered={covered} />

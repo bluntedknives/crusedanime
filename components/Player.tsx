@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Hls from 'hls.js'
 import {
@@ -11,6 +12,9 @@ import {
   IconPip,
   IconPlay,
   IconRefresh,
+  IconActivity,
+  IconChevronLeft,
+  IconClose,
   IconSettings,
   IconSkipBack,
   IconSkipForward,
@@ -93,6 +97,14 @@ const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 /** How long the "next episode" countdown runs before navigating. */
 const AUTO_NEXT_SECONDS = 8
+
+/**
+ * How early the "next episode" prompt appears before the end.
+ *
+ * Sized to sit inside a typical ED (90s) and after the last line of dialogue,
+ * so it is reachable without covering the ending itself.
+ */
+const NEAR_END_SECONDS = 45
 
 /**
  * Playback preferences that belong to the player rather than to one episode.
@@ -208,6 +220,22 @@ export default function Player({
   /** Seconds until the next episode starts; null when not counting down. */
   const [nextIn, setNextIn] = useState<number | null>(null)
   const autoNextTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  /**
+   * Sleep timer: minutes remaining, or null when off. Held as a deadline
+   * rather than a countdown so the number stays honest across a throttled tab
+   * (browsers clamp background intervals to ~1/s, which would drift).
+   */
+  const [sleepAt, setSleepAt] = useState<number | null>(null)
+  const [sleepMins, setSleepMins] = useState<number | null>(null)
+  const [sleepLabel, setSleepLabel] = useState<string | null>(null)
+  /** "Stats for nerds" overlay. */
+  const [statsOpen, setStatsOpen] = useState(false)
+  /** True once the episode has played to its end; drives the end card. */
+  const [ended, setEnded] = useState(false)
+  /** Audio tracks from the media element, refreshed on track change. */
+  const [audioTracks, setAudioTracks] = useState<{ index: number; label: string }[]>([])
+  const [audioIdx, setAudioIdx] = useState(0)
 
   /**
    * Stall recovery.
@@ -695,13 +723,18 @@ export default function Player({
       }
     }
     const onDur = () => setDuration(video.duration || 0)
-    const onPlay = () => setPlaying(true)
+    const onPlay = () => {
+      setPlaying(true)
+      // Clears the end card on replay or on the next episode's first frame.
+      setEnded(false)
+    }
     const onPause = () => {
       setPlaying(false)
       persist(video.currentTime, video.duration)
     }
     const onEnded = () => {
       setPlaying(false)
+      setEnded(true)
       persist(video.duration, video.duration, true)
       // Count down visibly so a viewer can cancel; navigating straight away
       // gave them no chance to stop it.
@@ -884,6 +917,61 @@ export default function Player({
     }
   }
 
+  /**
+   * Sleep timer.
+   *
+   * Pauses at the deadline and clears itself. Checked on a 1s interval but
+   * compared against an absolute timestamp, so a throttled tab still fires at
+   * the right moment rather than late.
+   */
+  useEffect(() => {
+    if (sleepAt == null) return
+    const tick = () => {
+      const left = sleepAt - Date.now()
+      if (left <= 0) {
+        const v = videoRef.current
+        if (v && !v.paused) v.pause()
+        setSleepAt(null)
+        setSleepMins(null)
+        setSleepLabel(null)
+        flash('Sleep timer ended — paused')
+        return
+      }
+      const mins = Math.floor(left / 60000)
+      const secs = Math.floor((left % 60000) / 1000)
+      setSleepLabel(mins > 0 ? `${mins}m ${String(secs).padStart(2, '0')}s` : `${secs}s`)
+    }
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [sleepAt, flash])
+
+  /**
+   * Discover audio tracks. `audioTracks` is not in every engine's typings and
+   * is missing entirely on Safari, so this degrades to the element's own
+   * default rather than throwing.
+   */
+  useEffect(() => {
+    const v = videoEl
+    if (!v) return
+    const read = () => {
+      const list = (v as HTMLVideoElement & { audioTracks?: { length: number; [i: number]: { label?: string; language?: string } } }).audioTracks
+      if (!list?.length) {
+        setAudioTracks([])
+        return
+      }
+      const out: { index: number; label: string }[] = []
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i]
+        out.push({ index: i, label: t?.label || t?.language || `Track ${i + 1}` })
+      }
+      setAudioTracks(out)
+    }
+    read()
+    v.addEventListener('loadedmetadata', read)
+    return () => v.removeEventListener('loadedmetadata', read)
+  }, [videoEl, activeSource?.url, rebuildNonce])
+
   // Apply the subtitle preference when a new track list arrives.
   useEffect(() => {
     const v = videoRef.current
@@ -914,6 +1002,21 @@ export default function Player({
     !!payload?.intro && time >= payload.intro.start && time < payload.intro.end - 0.5
   const outroActive =
     !!payload?.outro && time >= payload.outro.start && time < payload.outro.end - 0.5
+
+  /**
+   * The episode is close to over.
+   *
+   * Prefer the provider's outro marker when there is one, so the prompt lands
+   * with the credits rather than at a fixed offset. Falling back to a fixed
+   * window keeps it working for sources that report no markers at all.
+   */
+  const nearEnd =
+    !ended &&
+    duration > 0 &&
+    (payload?.outro?.start != null
+      ? time >= payload.outro.start
+      : duration - time <= NEAR_END_SECONDS) &&
+    time > 0
 
   /* ----------------------------------------------------------- ui chrome */
 
@@ -1237,6 +1340,75 @@ export default function Player({
         bar's own box keeps them clear without a magic number that drifts with
         the bar's contents.
       */}
+      {/*
+        End of episode. A full card rather than a toast: this is the moment the
+        viewer has to decide what to do next, and the video is black anyway.
+      */}
+      {ended && (
+        <div className="absolute inset-0 z-[45] grid place-items-center bg-black/80 px-4 animate-fade-in">
+          <div className="w-full max-w-sm rounded-xl border border-white/12 bg-base-850/98 p-5 text-center shadow-2xl">
+            <p className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+              Episode {episode} finished
+            </p>
+            <p className="mt-1.5 text-base font-semibold text-zinc-100">{animeTitle}</p>
+            <div className="mt-4 flex flex-col gap-2">
+              {nextHref ? (
+                <button
+                  type="button"
+                  onClick={() => router.push(nextHref)}
+                  className="btn-primary inline-flex w-full items-center justify-center gap-2 py-2.5 text-sm"
+                >
+                  <IconPlay size={16} />
+                  Next episode — EP {episode + 1}
+                </button>
+              ) : (
+                <p className="rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+                  That was the last episode.
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEnded(false)
+                    seekTo(0)
+                    togglePlay()
+                  }}
+                  className="btn-ghost flex-1 py-2 text-xs"
+                >
+                  <IconRefresh size={13} />
+                  Replay
+                </button>
+                {prevHref && (
+                  <Link href={prevHref} className="btn-ghost flex-1 py-2 text-xs">
+                    <IconChevronLeft size={13} />
+                    Previous
+                  </Link>
+                )}
+              </div>
+              <Link
+                href={`/anime/${animeId}`}
+                className="mt-0.5 font-mono text-[0.62rem] uppercase tracking-wider text-zinc-500 transition-colors hover:text-accent-soft"
+              >
+                Back to series details
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Near the end: offer the next episode without waiting for the credits. */}
+      {nearEnd && nextHref && (
+        <button
+          type="button"
+          onClick={() => router.push(nextHref)}
+          className="absolute bottom-[8.5rem] right-4 z-40 inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-black/90 px-4 py-2.5 text-sm font-medium text-white shadow-2xl transition hover:border-accent hover:bg-black animate-fade-up"
+        >
+          <IconPlay size={15} />
+          Next episode
+        </button>
+      )}
+
       {(introActive || outroActive) && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex flex-col items-end gap-2 px-4 pb-[8.5rem]">
           {introActive && (
@@ -1540,11 +1712,142 @@ export default function Player({
               </span>
             </button>
 
+            {audioTracks.length > 1 && (
+              <>
+                <p className="mt-2 px-2 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+                  Audio
+                </p>
+                <div className="grid gap-0.5">
+                  {audioTracks.map((t) => (
+                    <button
+                      key={t.index}
+                      type="button"
+                      onClick={() => {
+                        // `enabled` is the spec'd switch; setting it unsets the
+                        // others, so no loop is needed.
+                        const v = videoRef.current as
+                          | (HTMLVideoElement & { audioTracks?: { [i: number]: { enabled: boolean } } })
+                          | null
+                        const list = v?.audioTracks
+                        if (list?.[t.index]) list[t.index].enabled = true
+                        setAudioIdx(t.index)
+                      }}
+                      className={[
+                        'flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors',
+                        audioIdx === t.index ? 'bg-accent/20 text-accent-soft' : 'text-zinc-300 hover:bg-white/[0.06]',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">{t.label}</span>
+                      {audioIdx === t.index && <IconCheck size={12} />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <p className="mt-2 px-2 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+              Sleep timer
+            </p>
+            <div className="grid grid-cols-4 gap-1">
+              {[15, 30, 45, 60].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => {
+                    // The active duration toggles off; a different one re-arms.
+                    // Comparing against the chosen minutes (not merely "is a
+                    // timer running") is what makes that distinction possible.
+                    if (sleepMins === m) {
+                      setSleepAt(null)
+                      setSleepMins(null)
+                      setSleepLabel(null)
+                      flash('Sleep timer off')
+                      return
+                    }
+                    setSleepAt(Date.now() + m * 60000)
+                    setSleepMins(m)
+                    flash(`Sleeping in ${m}m`)
+                  }}
+                  className={[
+                    'rounded-md px-1.5 py-1.5 font-mono text-[0.68rem] transition-colors hover:bg-white/[0.06]',
+                    sleepMins === m ? 'bg-accent/20 text-accent-soft' : 'text-zinc-300',
+                  ].join(' ')}
+                >
+                  {m}m
+                </button>
+              ))}
+            </div>
+            {sleepLabel && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSleepAt(null)
+                  setSleepMins(null)
+                  setSleepLabel(null)
+                  flash('Sleep timer off')
+                }}
+                className="mt-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-accent-soft transition-colors hover:bg-white/[0.06]"
+              >
+                <span>Sleeping in {sleepLabel}</span>
+                <IconClose size={13} />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setStatsOpen((v) => !v)
+                setSettingsOpen(false)
+              }}
+              className="mt-1.5 flex w-full items-center gap-2 rounded-md border-t border-white/[0.07] px-2 pb-1 pt-2.5 text-xs text-zinc-300 transition-colors hover:text-accent-soft"
+            >
+              <IconActivity size={14} />
+              Stats for nerds
+            </button>
+
             <div className="mt-1.5 border-t border-white/[0.07] px-2 pt-2">
               <p className="font-mono text-[0.6rem] leading-relaxed text-zinc-600">
                 SPACE play · ←/→ 5s · ↑/↓ vol · F full · M mute · P PiP · N next
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Stats for nerds: live playback telemetry, for diagnosing a bad
+            stream without opening devtools. */}
+        {statsOpen && (
+          <div className="absolute right-3 top-3 z-40 w-64 rounded-xl border border-white/10 bg-base-850/98 p-3 shadow-2xl animate-scale-in">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="flex items-center gap-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-500">
+                <IconActivity size={12} />
+                Playback
+              </p>
+              <button type="button" onClick={() => setStatsOpen(false)} aria-label="Close stats" className="text-zinc-500 hover:text-zinc-200">
+                <IconClose size={13} />
+              </button>
+            </div>
+            <dl className="space-y-1 font-mono text-[0.66rem]">
+              {[
+                ['Resolution', videoEl ? `${videoEl.videoWidth}×${videoEl.videoHeight}` : '—'],
+                ['Level', currentLevel < 0 ? 'Auto' : (levels.find((l) => l.index === currentLevel)?.label ?? currentLevel)],
+                ['Bitrate', currentLevel < 0 ? 'auto' : (() => {
+                  // hls.js exposes bitrate on the level objects it parsed.
+                  const h = hlsRef.current
+                  const lv = h?.levels?.[currentLevel] as { bitrate?: number } | undefined
+                  return lv?.bitrate ? `${Math.round(lv.bitrate / 1000)} kbps` : '—'
+                })()],
+                ['Buffer', `${buffered > 0 && time > 0 ? Math.max(0, buffered - time).toFixed(1) : '0.0'}s`],
+                ['Dropped', String((videoEl?.getVideoPlaybackQuality?.().droppedVideoFrames) ?? 0)],
+                ['Playback rate', `${rate}×`],
+                ['Ready state', videoEl ? String(videoEl.readyState) : '—'],
+                ['Recoveries', String(recoveryAttempts.current)],
+              ].map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between gap-3">
+                  <dt className="text-zinc-500">{k}</dt>
+                  <dd className="truncate tabular-nums text-zinc-200">{v}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
         )}
       </div>

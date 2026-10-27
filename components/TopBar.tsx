@@ -89,10 +89,12 @@ export default function TopBar({ covered = false }: { covered?: boolean }) {
                 { href: '/search', label: 'Browse' },
                 { href: '/trending', label: 'Trending' },
                 { href: '/schedule', label: 'Schedule' },
+                { href: '/upnext', label: 'Up next' },
                 { href: '/season', label: 'Seasons' },
                 { href: '/genres', label: 'Genres' },
                 { href: '/random', label: 'Random' },
                 { href: '/watchlist', label: 'Watchlist' },
+                { href: '/ratings', label: 'Ratings' },
                 { href: '/history', label: 'History' },
                 { href: '/stats', label: 'Stats' },
               ].map((l) => (

@@ -16,7 +16,7 @@ import {
   IconHome,
   IconSettings,
   IconShuffle,
-  IconSparkle,
+  IconSparkle, IconPlay, IconStar,
 } from './icons'
 import SettingsDialog from './SettingsDialog'
 
@@ -30,11 +30,13 @@ interface RailItem {
 const ITEMS: RailItem[] = [
   { href: '/', label: 'Home', icon: IconHome, exact: true },
   { href: '/search', label: 'Browse', icon: IconCompass },
+  { href: '/upnext', label: 'Up next', icon: IconPlay },
   { href: '/trending', label: 'Trending', icon: IconFlame },
   { href: '/schedule', label: 'Schedule', icon: IconCalendar },
   { href: '/season', label: 'Seasons', icon: IconGrid2 },
   { href: '/genres', label: 'Genres', icon: IconSparkle },
   { href: '/watchlist', label: 'Watchlist', icon: IconBookmark },
+  { href: '/ratings', label: 'Ratings', icon: IconStar },
   { href: '/history', label: 'History', icon: IconHistory },
   { href: '/stats', label: 'Stats', icon: IconChart },
 ]

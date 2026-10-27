@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useMemo } from 'react'
 import {
   IconChart,
   IconClock,
@@ -12,10 +13,15 @@ import {
 } from '@/components/icons'
 import {
   formatDuration,
+  useHistory,
   useLibraryStats,
   useRatings,
   useWatchlist,
 } from '@/lib/store'
+import ActivityHeatmap from '@/components/ActivityHeatmap'
+import GenreDonut from '@/components/GenreDonut'
+import ProgressRing from '@/components/ProgressRing'
+import { useDailyGoal } from '@/lib/collections'
 
 /**
  * Viewing statistics.
@@ -28,6 +34,14 @@ export default function StatsPage() {
   const stats = useLibraryStats()
   const { entries: watchlist } = useWatchlist()
   const { count: ratedCount, average } = useRatings()
+  const { entries: history } = useHistory()
+  const { goal, setTarget } = useDailyGoal()
+
+  // Today's episodes, counted from history so it lines up with the heatmap.
+  const episodesToday = useMemo(() => {
+    const start = new Date().setHours(0, 0, 0, 0)
+    return history.filter((h) => h.watchedAt >= start).length
+  }, [history])
 
   const hasData = stats.episodesStarted > 0 || watchlist.length > 0
 
@@ -115,20 +129,7 @@ export default function StatsPage() {
             <section className="card p-5">
               <h2 className="text-sm font-semibold text-zinc-100">Completion</h2>
               <div className="mt-4 flex items-center gap-4">
-                <div
-                  className="relative grid h-24 w-24 shrink-0 place-items-center rounded-full"
-                  style={{
-                    background: `conic-gradient(var(--accent, #7c5cff) ${
-                      stats.completionRate * 360
-                    }deg, rgba(255,255,255,0.08) 0deg)`,
-                  }}
-                >
-                  <div className="grid h-[76px] w-[76px] place-items-center rounded-full bg-base-900">
-                    <span className="text-lg font-semibold tabular-nums text-zinc-100">
-                      {Math.round(stats.completionRate * 100)}%
-                    </span>
-                  </div>
-                </div>
+                <ProgressRing value={stats.completionRate} size={96} stroke={7} />
                 <div className="min-w-0 text-sm">
                   <p className="text-zinc-300">
                     <span className="font-semibold text-zinc-100">{stats.episodesCompleted}</span>{' '}
@@ -183,29 +184,9 @@ export default function StatsPage() {
                   next episode.
                 </p>
               ) : (
-                <ul className="mt-4 space-y-3">
-                  {stats.genreSlices.slice(0, 8).map((g) => (
-                    <li key={g.genre}>
-                      <div className="flex items-baseline justify-between text-xs">
-                        <Link
-                          href={`/search?genre=${encodeURIComponent(g.genre)}`}
-                          className="text-zinc-200 hover:text-accent-soft"
-                        >
-                          {g.genre}
-                        </Link>
-                        <span className="tabular-nums text-zinc-500">
-                          {formatDuration(g.minutes * 60)}
-                        </span>
-                      </div>
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
-                        <div
-                          className="h-full rounded-full bg-accent-soft"
-                          style={{ width: `${Math.max(2, g.share * 100)}%` }}
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-4">
+                  <GenreDonut slices={stats.genreSlices} size={180} />
+                </div>
               )}
 
               {(ratedCount > 0 || stats.topTitle) && (
@@ -235,6 +216,55 @@ export default function StatsPage() {
                   )}
                 </div>
               )}
+            </section>
+
+            {/* ------------------------------------------------- daily goal */}
+            <section className="card p-5">
+              <h2 className="text-sm font-semibold text-zinc-100">Daily goal</h2>
+              <div className="mt-4 flex items-center gap-5">
+                <ProgressRing
+                  value={goal.target > 0 ? episodesToday / goal.target : 0}
+                  size={88}
+                  stroke={6}
+                  label={`${episodesToday}/${goal.target}`}
+                  tone={episodesToday >= goal.target ? 'signal' : 'accent'}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-zinc-300">
+                    {episodesToday === 0
+                      ? 'Nothing watched today yet.'
+                      : episodesToday >= goal.target
+                        ? 'Goal reached today.'
+                        : `${goal.target - episodesToday} more to hit today's goal.`}
+                  </p>
+                  <div className="mt-3">
+                    <label
+                      htmlFor="goal-target"
+                      className="font-mono text-[0.6rem] uppercase tracking-wider text-zinc-500"
+                    >
+                      Episodes per day
+                    </label>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <input
+                        id="goal-target"
+                        type="range"
+                        min={1}
+                        max={15}
+                        value={goal.target}
+                        onChange={(e) => setTarget(Number(e.target.value))}
+                        className="h-1.5 w-full max-w-[12rem] cursor-pointer appearance-none rounded-full bg-white/10 accent-accent"
+                      />
+                      <span className="font-mono text-sm tabular-nums text-zinc-200">{goal.target}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* ---------------------------------------------- activity grid */}
+            <section className="card p-5 lg:col-span-2">
+              <h2 className="mb-4 text-sm font-semibold text-zinc-100">Activity</h2>
+              <ActivityHeatmap />
             </section>
           </div>
         </>

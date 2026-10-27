@@ -77,7 +77,7 @@ const HISTORY_LIMIT = 300
 
 /* ------------------------------------------------------------ safe storage */
 
-function read<T>(key: string, fallback: T): T {
+export function read<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback
   try {
     const raw = window.localStorage.getItem(key)
@@ -88,7 +88,7 @@ function read<T>(key: string, fallback: T): T {
   }
 }
 
-function write<T>(key: string, value: T): void {
+export function write<T>(key: string, value: T): void {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(key, JSON.stringify(value))
@@ -104,7 +104,7 @@ function write<T>(key: string, value: T): void {
  * Subscribe to a storage key. Returns the parsed value and a setter that
  * writes back, keeping every mounted hook in sync within the tab.
  */
-function useStored<T>(key: string, fallback: T) {
+export function useStored<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(fallback)
 
   const sync = useCallback(() => {

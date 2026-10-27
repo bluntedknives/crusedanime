@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
+import { IconCheck } from './icons'
 import type { EpisodeInfo } from '@/lib/consumet'
 import { formatTime, type ProgressEntry } from '@/lib/store'
+import { useEpisodeProgress } from '@/lib/collections'
 
 type Layout = 'grid' | 'list'
 
@@ -33,8 +35,16 @@ function EpisodeRow({
   progress?: ProgressEntry | null
   compact?: boolean
 }) {
+  const { isWatched: markedWatched, toggle } = useEpisodeProgress()
   const isCurrent = progress?.episode === ep.number
-  const watched = progress ? ep.number < progress.episode || (isCurrent && progress.duration > 0 && progress.position / progress.duration > 0.9) : false
+  // Playback progress and a manual tick are different claims: progress means
+  // "resume here", a tick means "I have seen this". Either one marks the row.
+  const watched =
+    markedWatched(animeId, ep.number) ||
+    (progress
+      ? ep.number < progress.episode ||
+        (isCurrent && progress.duration > 0 && progress.position / progress.duration > 0.9)
+      : false)
   const pct =
     isCurrent && progress?.duration
       ? Math.min(100, (progress.position / progress.duration) * 100)
@@ -82,6 +92,33 @@ function EpisodeRow({
             <span className="block h-full bg-accent" style={{ width: `${pct}%` }} />
           </span>
         )}
+      </span>
+
+      {/* Outside the link: a nested button would steal the navigation click. */}
+      <span
+        role="button"
+        tabIndex={0}
+        aria-label={watched ? `Mark episode ${ep.number} unwatched` : `Mark episode ${ep.number} watched`}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          toggle(animeId, ep.number)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            e.stopPropagation()
+            toggle(animeId, ep.number)
+          }
+        }}
+        className={[
+          'grid h-7 w-7 shrink-0 place-items-center rounded-md border transition',
+          watched
+            ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300'
+            : 'border-white/10 text-zinc-500 hover:border-white/25 hover:text-zinc-200',
+        ].join(' ')}
+      >
+        <IconCheck size={13} />
       </span>
 
       <span className="shrink-0 text-zinc-500 transition group-hover:text-accent-soft">

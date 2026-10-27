@@ -8,6 +8,9 @@ import TrailerEmbed from '@/components/TrailerEmbed'
 import EpisodeSection from '@/components/EpisodeSection'
 import DetailHero from '@/components/DetailHero'
 import { RatingWidget } from '@/components/DetailActions'
+import NotesPanel from '@/components/NotesPanel'
+import RecommendGrid from '@/components/RecommendGrid'
+import SpoilerSynopsis from '@/components/SpoilerSynopsis'
 import * as data from '@/lib/data'
 import PreviewBanner from '@/components/PreviewBanner'
 import {
@@ -159,7 +162,9 @@ export default async function AnimeDetailPage({ params }: Params) {
             <section>
               <h2 className="section-title mb-3">{coverLabel('Synopsis', covered)}</h2>
               <div className="max-w-3xl">
-                <Synopsis description={media.description} />
+                {/* Blurred until asked for: a synopsis is the single easiest
+                    place to spoil a show someone has not started. */}
+                <SpoilerSynopsis description={media.description} />
               </div>
             </section>
 
@@ -238,6 +243,8 @@ export default async function AnimeDetailPage({ params }: Params) {
             </section>
 
             <TrailerEmbed trailer={media.trailer} title={title} covered={covered} />
+
+            <NotesPanel animeId={media.id} title={title} />
 
             {media.externalLinks?.length ? (
               <section className="surface p-4">
@@ -337,11 +344,7 @@ export default async function AnimeDetailPage({ params }: Params) {
         {recommendations.length > 0 && (
           <section className="mt-10">
             <h2 className="section-title mb-3">You might also like</h2>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {recommendations.slice(0, 12).map((m) => (
-                <PosterCard key={m.id} media={m} />
-              ))}
-            </div>
+            <RecommendGrid items={recommendations} namespace="reco-detail" />
           </section>
         )}
       </div>

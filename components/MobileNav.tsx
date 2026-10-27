@@ -2,12 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { IconBookmark, IconCalendar, IconChart, IconCompass, IconHome } from './icons'
+import { IconBookmark, IconCalendar, IconChart, IconCompass, IconHome, IconPlay,
+} from './icons'
 
 const ITEMS = [
   { href: '/', label: 'Home', icon: IconHome, exact: true },
   { href: '/search', label: 'Browse', icon: IconCompass },
   { href: '/schedule', label: 'Schedule', icon: IconCalendar },
+  { href: '/upnext', label: 'Up next', icon: IconPlay },
   { href: '/watchlist', label: 'List', icon: IconBookmark },
   { href: '/stats', label: 'Stats', icon: IconChart },
 ]

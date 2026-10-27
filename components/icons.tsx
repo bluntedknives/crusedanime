@@ -493,3 +493,102 @@ export function IconSparkle(p: IconProps) {
     </Svg>
   )
 }
+
+export function IconMoon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+    </Svg>
+  )
+}
+
+export function IconActivity(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3 12h3.5l2-6 3 12 2.5-8 2 4H21" />
+    </Svg>
+  )
+}
+
+export function IconCommand(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M9 6a2 2 0 1 0-2 2h2V6Zm0 0v12m0-12h6m-6 12a2 2 0 1 1-2-2h2v2Zm6-12a2 2 0 1 1 2 2h-2V6Zm0 12a2 2 0 1 0 2-2h-2v2Zm0-12v12" />
+    </Svg>
+  )
+}
+
+export function IconKeyboard(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <path d="M6 9.5h.01M9.5 9.5h.01M13 9.5h.01M16.5 9.5h.01M8 14.5h8" />
+    </Svg>
+  )
+}
+
+export function IconStickyNote(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M5 4.5h14v9l-5 5H5v-14Z" />
+      <path d="M19 13.5h-5v5" />
+      <path d="M8.5 9h7M8.5 12h4" />
+    </Svg>
+  )
+}
+
+export function IconTarget(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="1" />
+    </Svg>
+  )
+}
+
+export function IconEyeOff(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 4l16 16" />
+      <path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c5 0 8.5 4.4 9.5 7-.4 1-1 2.1-1.9 3.1" />
+      <path d="M6.3 7.7C4.7 9 3.5 10.8 2.5 12c1 2.6 4.5 7 9.5 7 1.5 0 2.8-.4 4-1" />
+      <path d="M10 10.2a2.6 2.6 0 0 0 3.6 3.6" />
+    </Svg>
+  )
+}
+
+export function IconEye(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 12C3.5 9.4 7 5 12 5s8.5 4.4 9.5 7c-1 2.6-4.5 7-9.5 7s-8.5-4.4-9.5-7Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </Svg>
+  )
+}
+
+export function IconSort(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M7 4v16m0 0-3-3m3 3 3-3" />
+      <path d="M14 7h6M14 12h5M14 17h4" />
+    </Svg>
+  )
+}
+
+export function IconArrowRight(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M5 12h14m0 0-5.5-5.5M19 12l-5.5 5.5" />
+    </Svg>
+  )
+}
+
+export function IconAudio(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 4.5 8 8H4.5v8H8l4 3.5v-15Z" />
+      <path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10" />
+    </Svg>
+  )
+}

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useProgress, useViewMode, useWatchlist, type WatchStatus } from '@/lib/store'
+import { useProgress, useRatings, useViewMode, useWatchlist, type WatchStatus } from '@/lib/store'
 import { formatTime, progressPercent } from '@/lib/store'
 
 const STATUS_LABELS: Record<WatchStatus, string> = {
@@ -15,7 +15,7 @@ const STATUS_LABELS: Record<WatchStatus, string> = {
 
 const ORDER: WatchStatus[] = ['watching', 'planned', 'completed', 'paused', 'dropped']
 
-type SortKey = 'updated' | 'added' | 'title' | 'score' | 'progress'
+type SortKey = 'updated' | 'added' | 'title' | 'score' | 'progress' | 'mine'
 
 const SORTS: { value: SortKey; label: string }[] = [
   { value: 'updated', label: 'Recently updated' },
@@ -23,6 +23,7 @@ const SORTS: { value: SortKey; label: string }[] = [
   { value: 'title', label: 'Title A–Z' },
   { value: 'score', label: 'Highest rated' },
   { value: 'progress', label: 'Progress' },
+  { value: 'mine', label: 'Your rating' },
 ]
 
 /** How far through a title the viewer is, 0–1. Drives the progress sort. */
@@ -192,6 +193,7 @@ function EntryCard({
 export default function WatchlistPage() {
   const { entries, ready, remove, setStatus, clear, byStatus } = useWatchlist()
   const { mode, setMode } = useViewMode()
+  const { get: getRating } = useRatings()
   const { all, continueWatching, clear: clearProgress } = useProgress()
   const [tab, setTab] = useState<'all' | WatchStatus>('all')
   const [query, setQuery] = useState('')
@@ -236,6 +238,11 @@ export default function WatchlistPage() {
         break
       case 'added':
         sorted.sort((a, b) => b.addedAt - a.addedAt)
+        break
+      case 'mine':
+        // Unrated titles sink to the bottom rather than sorting as zero, so a
+        // partly-rated list does not bury the ones actually scored.
+        sorted.sort((a, b) => (getRating(b.id) ?? -1) - (getRating(a.id) ?? -1))
         break
       case 'progress':
         sorted.sort((a, b) => progressRatio(b, progressFor) - progressRatio(a, progressFor))

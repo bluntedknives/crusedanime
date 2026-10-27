@@ -25,6 +25,24 @@ interface Props {
   initialEpisodes?: EpisodeInfo[]
 }
 
+/** Condense episode numbers into ranges: [1,2,3,7] -> "1-3, 7". */
+function summariseNumbers(nums: number[]): string {
+  if (!nums.length) return 'none'
+  const sorted = [...nums].sort((a, b) => a - b)
+  const parts: string[] = []
+  let start = sorted[0]
+  let prev = sorted[0]
+  for (let i = 1; i <= sorted.length; i++) {
+    const n = sorted[i]
+    if (n !== prev + 1) {
+      parts.push(start === prev ? String(start) : `${start}-${prev}`)
+      start = n
+    }
+    prev = n
+  }
+  return parts.join(', ')
+}
+
 export default function WatchClient({
   media,
   episode,
@@ -205,7 +223,26 @@ export default function WatchClient({
     })) as EpisodeInfo[]
   }, [episodes, media.episodes])
 
-  const dubAvailable = episodes.some((e) => e.hasDub)
+  /**
+   * What this *episode* actually offers, which can differ from the series.
+   * Providers frequently have a dub for later episodes but not the first, so
+   * the toggle reflects the episode in front of the viewer rather than the
+   * series as a whole.
+   */
+  const thisEp = episodes.find((e) => e.number === episode)
+  /**
+   * Both tracks stay selectable whenever the title is on the provider.
+   *
+   * The provider's per-episode `dub` flag is unreliable — it reports no dub for
+   * episodes whose dub stream resolves perfectly — so it cannot gate the
+   * control without hiding working audio. The flags are surfaced as a hint in
+   * the tooltip instead, and a track that genuinely is not there fails in the
+   * player with a retry rather than being silently unreachable.
+   */
+  /** Whether the provider's metadata actually lists a dub for this episode. */
+  const dubListed = !!thisEp?.hasDub
+  /** Episode numbers that have a dub, for the "which ones" hint. */
+  const dubbedEpisodes = episodes.filter((e) => e.hasDub).map((e) => e.number)
 
   return (
     <div className="container-page pt-3">
@@ -266,22 +303,46 @@ export default function WatchClient({
               <IconChevronRight size={16} />
             </Link>
 
-            <div className="flex overflow-hidden rounded-lg border border-white/[0.08]">
-              {(['sub', 'dub'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => switchType(t)}
-                  disabled={t === 'dub' && !dubAvailable}
-                  title={t === 'dub' && !dubAvailable ? 'No dub available for this title' : `Switch to ${t}`}
-                  className={[
-                    'px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition disabled:opacity-40',
-                    type === t ? 'bg-accent text-white' : 'text-zinc-400 hover:bg-white/[0.06]',
-                  ].join(' ')}
-                >
-                  {t}
-                </button>
-              ))}
+            {/* Audio track toggle. Each side reports whether the provider
+                actually carries it for this episode, and the dub tooltip names
+                the episodes that do when the current one does not. */}
+            <div
+              className="flex overflow-hidden rounded-lg border border-white/[0.08]"
+              role="group"
+              aria-label="Audio track"
+            >
+              {(['sub', 'dub'] as const).map((t) => {
+                const title =
+                  t === 'dub'
+                    ? dubListed
+                      ? 'Switch to dub — listed for this episode'
+                      : dubbedEpisodes.length
+                        ? `Switch to dub — the provider lists dubs for episodes ${summariseNumbers(dubbedEpisodes)}`
+                        : 'Switch to dub — not listed by the provider, but worth trying'
+                    : 'Switch to sub'
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => switchType(t)}
+                    aria-pressed={type === t}
+                    title={title}
+                    className={[
+                      'relative px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-40',
+                      type === t ? 'bg-accent text-white' : 'text-zinc-400 hover:bg-white/[0.06]',
+                    ].join(' ')}
+                  >
+                    {t}
+                    {/* A dot marks a track the provider carries but the viewer
+                        is not currently on. */}
+                    {/* A dot means the provider lists this track but the viewer
+                        is on the other one. */}
+                    {type !== t && (t === 'sub' || dubListed || dubbedEpisodes.length > 0) && (
+                      <span className="absolute right-1 top-1 h-1 w-1 rounded-full bg-signal" />
+                    )}
+                  </button>
+                )
+              })}
             </div>
 
             <div className="ml-auto flex items-center gap-1.5">
