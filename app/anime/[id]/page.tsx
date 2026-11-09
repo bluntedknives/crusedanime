@@ -234,6 +234,8 @@ export default async function AnimeDetailPage({ params }: Params) {
               altTitles={altTitles}
               totalEpisodes={media.episodes}
               status={media.status}
+              poster={posterOf(media) ?? ''}
+              genres={media.genres ?? []}
             />
           </div>
 

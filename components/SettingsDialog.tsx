@@ -136,6 +136,33 @@ export default function SettingsDialog({ open, onClose }: Props) {
           />
 
           <p className="mt-2 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-600">
+            Downloads
+          </p>
+          <div className="px-3 pb-3">
+            <span className="label">Storage cap</span>
+            <p className="mb-2 text-xs text-zinc-500">
+              Stop new downloads once this much is saved. Does not delete anything.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {[0, 1_000, 2_000, 5_000, 10_000, 20_000].map((mb) => (
+                <button
+                  key={mb}
+                  type="button"
+                  onClick={() => update({ downloadCapMb: mb })}
+                  className={[
+                    'flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+                    (prefs.downloadCapMb ?? 0) === mb
+                      ? 'border-accent/50 bg-accent/15 text-accent-soft'
+                      : 'border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:bg-white/[0.06]',
+                  ].join(' ')}
+                >
+                  {mb === 0 ? 'Off' : mb >= 1000 ? `${mb / 1000} GB` : `${mb} MB`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-2 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-600">
             Appearance
           </p>
           <div className="px-3 pb-3">

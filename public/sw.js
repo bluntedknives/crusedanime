@@ -251,6 +251,9 @@ self.addEventListener('message', (event) => {
       (async () => {
         const pageCache = await caches.open(PAGE_CACHE)
         const imageCache = await caches.open(IMAGE_CACHE)
+        const staticCache = await caches.open(STATIC_CACHE)
+        const assetUrls = new Set()
+
         await Promise.all(
           data.urls
             .filter((u) => typeof u === 'string' && u.startsWith('/'))
@@ -258,12 +261,39 @@ self.addEventListener('message', (event) => {
               try {
                 const res = await fetch(u)
                 if (!isCacheable(res)) return
-                const dest = res.headers.get('content-type')?.startsWith('image/') ? imageCache : pageCache
-                await dest.put(u, res.clone())
+                const type = res.headers.get('content-type') || ''
+                if (type.startsWith('image/')) {
+                  await imageCache.put(u, res.clone())
+                  return
+                }
+                await pageCache.put(u, res.clone())
+
+                // A cached HTML document is useless offline without the JS and
+                // CSS it references: the browser fetches those chunks at load
+                // time, and if the user never visited the route live they were
+                // never cached. So pull every /_next asset the document names
+                // into the static cache too.
+                if (type.startsWith('text/html')) {
+                  const html = await res.clone().text()
+                  for (const m of html.matchAll(/(?:src|href)="(\/_next\/[^"]+)"/g)) {
+                    assetUrls.add(m[1].replace(/&amp;/g, '&'))
+                  }
+                }
               } catch {
                 /* best-effort */
               }
             }),
+        )
+
+        await Promise.all(
+          [...assetUrls].map(async (u) => {
+            try {
+              const res = await fetch(u)
+              if (isCacheable(res)) await staticCache.put(u, res.clone())
+            } catch {
+              /* best-effort */
+            }
+          }),
         )
       })(),
     )

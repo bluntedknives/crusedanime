@@ -502,6 +502,8 @@ export interface Prefs {
   autoNext: boolean
   skipIntro: boolean
   subtitlesOn: boolean
+  /** Storage cap for offline downloads, in MB. 0 disables the cap. */
+  downloadCapMb: number
 }
 
 const DEFAULT_PREFS: Prefs = {
@@ -510,6 +512,17 @@ const DEFAULT_PREFS: Prefs = {
   autoNext: true,
   skipIntro: false,
   subtitlesOn: true,
+  downloadCapMb: 0,
+}
+
+/**
+ * Read prefs outside React.
+ *
+ * The download queue and the cap check run in plain module code, not in a
+ * component, so they need a synchronous read rather than the hook.
+ */
+export function getPrefs(): Prefs {
+  return { ...DEFAULT_PREFS, ...read<Prefs>(K.prefs, DEFAULT_PREFS) }
 }
 
 export function usePrefs() {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import EpisodeList from './EpisodeList'
+import SeriesDownloads from './SeriesDownloads'
 import type { EpisodeInfo } from '@/lib/consumet'
 import { useProgress, usePrefs } from '@/lib/store'
 import { coverLabel } from '@/lib/cover'
@@ -17,6 +18,8 @@ interface Props {
   status: string | null
   /** Restricted mode: relabel headings before render, not after. */
   covered?: boolean
+  poster?: string
+  genres?: string[]
 }
 
 export default function EpisodeSection({
@@ -27,6 +30,8 @@ export default function EpisodeSection({
   totalEpisodes,
   status,
   covered = false,
+  poster = '',
+  genres,
 }: Props) {
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -149,6 +154,22 @@ export default function EpisodeSection({
           )}
         </div>
       )}
+
+      {episodes.length > 0 && (
+        <div className="mt-5 border-t border-white/[0.06] pt-5">
+          <SeriesDownloads
+            animeId={animeId}
+            animeTitle={title}
+            poster={poster}
+            malId={malId}
+            genres={genres}
+            episodes={episodes}
+            totalEpisodes={totalEpisodes}
+            type={type}
+          />
+        </div>
+      )}
     </section>
   )
 }
+

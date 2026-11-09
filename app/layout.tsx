@@ -14,6 +14,7 @@ import CommandPalette from '@/components/CommandPalette'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import GlobalShortcuts from '@/components/GlobalShortcuts'
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister'
+import OfflineNav from '@/components/OfflineNav'
 import InstallDialog from '@/components/InstallDialog'
 import InstallPrompt from '@/components/InstallPrompt'
 import { coverMetadata, isCovered } from '@/lib/coverServer'
@@ -143,6 +144,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       {/* PWA surfaces: registers the service worker and, on mobile, offers to
           install the app. The prompt is dismissible and never shows on /watch. */}
       <ServiceWorkerRegister />
+      <OfflineNav />
       <InstallDialog />
       <InstallPrompt />
         <Sidebar covered={covered} />

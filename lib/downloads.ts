@@ -22,6 +22,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { getPrefs } from './store'
 
 export type DownloadStatus = 'queued' | 'downloading' | 'ready' | 'error'
 
@@ -115,6 +116,145 @@ function dropMeta(key: string) {
   store = rest
   persist()
   emit()
+}
+
+// A download cannot outlive the page: its in-flight fetch dies with it. Any
+// entry caught mid-flight by a reload is marked failed so the UI offers a retry
+// instead of a progress bar that will never move. Whatever bytes it already
+// wrote stay in the cache; a retry simply overwrites them.
+;(function recoverInterrupted() {
+  if (typeof window === 'undefined') return
+  let changed = false
+  for (const [key, m] of Object.entries(store)) {
+    if (m.status === 'downloading' || m.status === 'queued') {
+      store[key] = { ...m, status: 'error', error: 'Interrupted — tap to resume', progress: 0 }
+      changed = true
+    }
+  }
+  if (changed) persist()
+})()
+
+/* ------------------------------------------------------------------ queue */
+
+/**
+ * Pending episode downloads, in the order they were requested.
+ *
+ * Kept as a module-level FIFO so a batch survives navigation: the user taps
+ * "Download all" on the series page, opens an episode, and the queue keeps
+ * draining in the background. Only a few run at once — see `pumpQueue` — since
+ * the bottleneck is the upstream CDN, not the browser.
+ */
+const queue: string[] = []
+const queueInputs = new Map<string, DownloadInput>()
+let active = 0
+
+/** How many episode downloads run at once. */
+const QUEUE_CONCURRENCY = 2
+
+function pumpQueue() {
+  while (active < QUEUE_CONCURRENCY && queue.length) {
+    const key = queue.shift()!
+    const input = queueInputs.get(key)
+    if (!input) continue
+    // Drop stale requests: a queued episode already downloading or done.
+    const cur = store[key]
+    if (cur && (cur.status === 'downloading' || cur.status === 'ready')) continue
+    active++
+    void runDownload(key, input).finally(() => {
+      active--
+      queueInputs.delete(key)
+      emit()
+      pumpQueue()
+    })
+  }
+}
+
+/** Bytes stored by downloads that are finished or in flight. */
+function storedBytes(): number {
+  return Object.values(store).reduce((n, d) => n + (d.bytes || 0), 0)
+}
+
+/**
+ * Whether the configured storage cap allows another `size` bytes.
+ *
+ * The cap is a prefs value in MB; 0 disables it. It is a guard against filling
+ * the device, not a hard quota — the browser's own estimate is the real limit.
+ */
+export function withinCap(extraBytes = 0): boolean {
+  const capMb = getPrefs().downloadCapMb
+  if (!capMb) return true
+  return storedBytes() + extraBytes <= capMb * 1024 * 1024
+}
+
+/**
+ * Enqueue one episode, or a whole run of them.
+ *
+ * Returns immediately; progress arrives through the store. Episodes already
+ * downloaded are skipped, so this doubles as "download the ones I am missing".
+ */
+export function queueDownloads(inputs: DownloadInput[]): number {
+  let queued = 0
+  for (const input of inputs) {
+    const key = localKeyFor(input.animeId, input.episode, input.type)
+    const cur = store[key]
+    if (cur && (cur.status === 'downloading' || cur.status === 'ready')) continue
+    if (queue.includes(key)) continue
+    if (!withinCap()) {
+      setMeta(key, {
+        ...metaBase(key, input),
+        status: 'error',
+        error: 'Storage cap reached',
+      })
+      continue
+    }
+    queueInputs.set(key, input)
+    queue.push(key)
+    // Show the episode as queued straight away so the list reflects intent.
+    setMeta(key, { ...metaBase(key, input), status: 'queued', progress: 0, bytes: 0 })
+    queued++
+  }
+  pumpQueue()
+  return queued
+}
+
+/** Cancel every queued or in-flight episode for one series. */
+export function cancelSeries(animeId: number, type: 'sub' | 'dub'): void {
+  for (const [key, input] of [...queueInputs]) {
+    if (input.animeId === animeId && input.type === type) {
+      queueInputs.delete(key)
+      const i = queue.indexOf(key)
+      if (i >= 0) queue.splice(i, 1)
+      dropMeta(key)
+    }
+  }
+  for (const [key, ctrl] of [...inflight]) {
+    const m = store[key]
+    if (m && m.animeId === animeId && m.type === type) ctrl.abort()
+  }
+}
+
+function metaBase(key: string, input: DownloadInput): DownloadMeta {
+  return {
+    key,
+    animeId: input.animeId,
+    animeTitle: input.animeTitle,
+    poster: input.poster,
+    episode: input.episode,
+    totalEpisodes: input.totalEpisodes ?? null,
+    type: input.type,
+    genres: input.genres,
+    status: 'queued',
+    progress: 0,
+    bytes: 0,
+    createdAt: Date.now(),
+    intro: input.intro ?? null,
+    outro: input.outro ?? null,
+  }
+}
+
+/** True while any episode is queued or in flight. */
+export function queueActive(): boolean {
+  return queue.length > 0 || active > 0
 }
 
 /* ------------------------------------------------------------ identifiers */
@@ -424,24 +564,20 @@ async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<vo
  */
 export async function downloadEpisode(input: DownloadInput): Promise<void> {
   const key = localKeyFor(input.animeId, input.episode, input.type)
+  return runDownload(key, input)
+}
+
+async function runDownload(key: string, input: DownloadInput): Promise<void> {
   const existing = store[key]
   if (existing && (existing.status === 'downloading' || existing.status === 'ready')) return
+  if (!withinCap()) {
+    setMeta(key, { ...metaBase(key, input), status: 'error', error: 'Storage cap reached' })
+    return
+  }
 
   const base: DownloadMeta = {
-    key,
-    animeId: input.animeId,
-    animeTitle: input.animeTitle,
-    poster: input.poster,
-    episode: input.episode,
-    totalEpisodes: input.totalEpisodes ?? null,
-    type: input.type,
-    genres: input.genres,
+    ...metaBase(key, input),
     status: 'downloading',
-    progress: 0,
-    bytes: 0,
-    createdAt: Date.now(),
-    intro: input.intro ?? null,
-    outro: input.outro ?? null,
   }
   setMeta(key, base)
 
@@ -521,10 +657,13 @@ export async function downloadEpisode(input: DownloadInput): Promise<void> {
       subtitles,
     })
 
-    // Warm the page cache so the watch route itself opens offline, and try to
-    // keep the poster. Both are best-effort.
+    // Warm the page cache so the offline journey works end to end: the watch
+    // route to play from, the library to reach it through, and the series page
+    // it was started from. The poster is kept for the library thumbnail.
     precacheForOffline([
       `/watch/${input.animeId}/${input.episode}${input.type === 'dub' ? '?type=dub' : ''}`,
+      `/anime/${input.animeId}`,
+      '/downloads',
       input.poster,
     ])
   } catch (err) {
@@ -543,6 +682,7 @@ export async function downloadEpisode(input: DownloadInput): Promise<void> {
 
 /** Cancel a running download and remove anything it stored. */
 export async function cancelDownload(key: string): Promise<void> {
+  dequeue(key)
   inflight.get(key)?.abort()
   inflight.delete(key)
   dropMeta(key)
@@ -551,10 +691,17 @@ export async function cancelDownload(key: string): Promise<void> {
 
 /** Remove a finished (or failed) download and its bytes. */
 export async function removeDownload(key: string): Promise<void> {
+  dequeue(key)
   inflight.get(key)?.abort()
   inflight.delete(key)
   dropMeta(key)
   await deleteCache(key)
+}
+
+function dequeue(key: string) {
+  queueInputs.delete(key)
+  const i = queue.indexOf(key)
+  if (i >= 0) queue.splice(i, 1)
 }
 
 async function deleteCache(key: string): Promise<void> {
@@ -597,6 +744,42 @@ export function listDownloads(): DownloadMeta[] {
 
 export function totalBytes(): number {
   return Object.values(store).reduce((n, d) => n + (d.bytes || 0), 0)
+}
+
+export interface StorageEstimate {
+  /** Bytes this app's downloads occupy, from our own metadata. */
+  usedBytes: number
+  /** Browser-reported usage of the whole origin, when available. */
+  originBytes: number | null
+  /** Browser-reported quota for the origin, when available. */
+  quotaBytes: number | null
+  persisted: boolean
+}
+
+/**
+ * Storage figures for the meter.
+ *
+ * `usedBytes` counts downloads only, which is what the user controls. The
+ * origin/quota pair comes from the browser's own estimate and includes the
+ * service-worker caches, so the two will not match — that is expected and the
+ * UI labels them differently.
+ */
+export async function estimateStorage(): Promise<StorageEstimate> {
+  const usedBytes = totalBytes()
+  let originBytes: number | null = null
+  let quotaBytes: number | null = null
+  let persisted = false
+  try {
+    if (navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate()
+      originBytes = est.usage ?? null
+      quotaBytes = est.quota ?? null
+    }
+    if (navigator.storage?.persisted) persisted = await navigator.storage.persisted()
+  } catch {
+    /* storage API unavailable; the meter falls back to usedBytes alone */
+  }
+  return { usedBytes, originBytes, quotaBytes, persisted }
 }
 
 /**
@@ -656,8 +839,11 @@ export function useDownloads() {
     get: (key: string) => entries[key],
     has: (key: string) => entries[key]?.status === 'ready',
     download: downloadEpisode,
+    queue: queueDownloads,
     remove: removeDownload,
     cancel: cancelDownload,
+    cancelSeries,
+    queued: Object.values(entries).some((d) => d.status === 'queued' || d.status === 'downloading'),
   }
 }
 

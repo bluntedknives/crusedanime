@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useMemo } from 'react'
 import { IconCloudOff, IconDownload, IconPlay, IconTrash } from '@/components/icons'
+import StorageMeter from '@/components/StorageMeter'
 import { formatBytes, useDownloads } from '@/lib/downloads'
 
 /**
@@ -125,10 +126,13 @@ export default function DownloadsPage() {
       )}
 
       {list.length > 0 && (
-        <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-xs text-zinc-600">
-          <IconCloudOff size={13} />
-          Downloads stay on this device and play without a connection.
-        </p>
+        <>
+          <StorageMeter className="mt-5" />
+          <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-zinc-600">
+            <IconCloudOff size={13} />
+            Downloads stay on this device and play without a connection.
+          </p>
+        </>
       )}
     </div>
   )
