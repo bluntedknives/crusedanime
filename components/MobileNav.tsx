@@ -19,7 +19,7 @@ export default function MobileNav() {
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.07] bg-base-900/95 backdrop-blur-2xl lg:hidden">
-      <div className="mx-auto flex max-w-lg items-stretch justify-around px-2 pb-[env(safe-area-inset-bottom)]">
+      <div className="mx-auto flex max-w-lg items-stretch justify-around px-2 pb-[env(safe-area-inset-bottom)] pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
         {ITEMS.map((item) => {
           const Icon = item.icon
           const active = item.exact ? pathname === item.href : pathname.startsWith(item.href)

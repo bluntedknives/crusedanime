@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect } from 'react'
-import { IconClose } from './icons'
+import { IconClose, IconInstall } from './icons'
 import { usePrefs, useViewMode } from '@/lib/store'
 import { CoverToggle } from './CoverClient'
 import AdsToggle from './ads/AdsToggle'
 import BackupPanel from './BackupPanel'
+import { openInstallDialog } from './InstallDialog'
+import { useInstallPrompt } from '@/lib/pwa'
 
 interface Props {
   open: boolean
@@ -55,6 +57,7 @@ function Toggle({
 export default function SettingsDialog({ open, onClose }: Props) {
   const { prefs, update } = usePrefs()
   const { mode, setMode } = useViewMode()
+  const { installed } = useInstallPrompt()
 
   useEffect(() => {
     if (!open) return
@@ -72,16 +75,16 @@ export default function SettingsDialog({ open, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="surface-raised relative z-10 w-full max-w-md overflow-hidden shadow-2xl animate-scale-in"
+        className="surface-raised relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden shadow-2xl animate-scale-in"
       >
-        <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.07] px-4 py-3">
           <h2 className="text-sm font-semibold text-zinc-100">Settings</h2>
           <button type="button" onClick={onClose} className="btn-icon h-8 w-8" aria-label="Close settings">
             <IconClose size={16} />
           </button>
         </div>
 
-        <div className="p-2">
+        <div className="overflow-y-auto overscroll-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
           <p className="px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-600">
             Playback
           </p>
@@ -154,6 +157,31 @@ export default function SettingsDialog({ open, onClose }: Props) {
                 </button>
               ))}
             </div>
+          </div>
+
+          <p className="mt-2 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-600">
+            App
+          </p>
+          <div className="px-3 pb-3">
+            {installed ? (
+              <p className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2.5 text-xs text-zinc-500">
+                Installed — launch crused from your home screen or app list.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openInstallDialog()}
+                className="flex w-full items-center gap-2.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-left text-sm text-zinc-200 transition-colors hover:bg-white/[0.06]"
+              >
+                <IconInstall size={16} className="text-accent-soft" />
+                <span className="min-w-0">
+                  <span className="block">Install app</span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    Full-screen, works offline
+                  </span>
+                </span>
+              </button>
+            )}
           </div>
 
           <p className="mt-2 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-zinc-600">

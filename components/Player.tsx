@@ -1122,7 +1122,7 @@ export default function Player({
         className={[
           'group/shell relative mx-auto overflow-hidden rounded-[var(--radius-xl)] border border-white/[0.06] bg-black',
           theater
-            ? 'w-full max-w-[min(100%,calc((100vh-9rem)*1.7778))]'
+            ? 'w-full max-w-[min(100%,calc((100dvh-9rem)*1.7778))]'
             : 'w-full max-w-[min(100%,calc(100dvh-16rem))] lg:max-w-[min(100%,calc((100dvh-7.9rem)*1.7778))]',
         ].join(' ')}
       >
@@ -1222,7 +1222,7 @@ export default function Player({
       className={[
         'group/shell relative mx-auto overflow-hidden rounded-[var(--radius-xl)] border border-white/[0.06] bg-black',
         theater
-          ? 'w-full max-w-[min(100%,calc((100vh-9rem)*1.7778))]'
+          ? 'w-full max-w-[min(100%,calc((100dvh-9rem)*1.7778))]'
           : 'w-full max-w-[min(100%,calc(100dvh-16rem))] lg:max-w-[min(100%,calc((100dvh-7.9rem)*1.7778))]',
         uiVisible ? '' : 'cursor-none',
       ].join(' ')}

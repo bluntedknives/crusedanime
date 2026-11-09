@@ -316,7 +316,7 @@ export default function FilterPanel({ value, onChange, activeCount }: Props) {
       {mobileOpen && (
         <div className="fixed inset-0 z-[60] lg:hidden">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
-          <div className="surface-raised absolute inset-x-0 bottom-0 max-h-[85vh] overflow-y-auto rounded-b-none animate-fade-up">
+          <div className="surface-raised absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto overscroll-contain rounded-b-none pb-[env(safe-area-inset-bottom)] animate-fade-up">
             <div className="sticky top-0 flex items-center justify-between border-b border-white/[0.07] bg-base-850/95 px-4 py-3 backdrop-blur">
               <h2 className="text-sm font-semibold text-zinc-100">Filters</h2>
               <button

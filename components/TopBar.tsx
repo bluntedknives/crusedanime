@@ -27,8 +27,8 @@ export default function TopBar({ covered = false }: { covered?: boolean }) {
 
   return (
     <>
-      <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-base/85 backdrop-blur-xl">
-        <div className="container-page flex h-16 items-center gap-3">
+      <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-base/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+        <div className="container-page flex h-16 items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-8 lg:pr-8">
           <Link href="/" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="crused.wtf home">
             <span className="grid h-8 w-8 place-items-center rounded-md bg-accent font-display text-base font-black text-base-900">
               c

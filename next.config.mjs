@@ -14,6 +14,25 @@ const nextConfig = {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
+  // The service worker and the app icons must be served from the origin root.
+  // `sw.js` in particular must never be cached by the browser for long, or a
+  // new build cannot take over; `Service-Worker-Allowed` widens its scope to
+  // the whole origin so it can control every route.
+  async headers() {
+    return [
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=0, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+      {
+        source: '/icons/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=604800, immutable' }],
+      },
+    ]
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 's4.anilist.co' },

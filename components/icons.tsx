@@ -602,3 +602,24 @@ export function IconAudio(p: IconProps) {
     </Svg>
   )
 }
+
+export function IconInstall(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="6.5" y="2.8" width="11" height="18.4" rx="2.4" />
+      <path d="M12 7v6m0 0-2.4-2.4M12 13l2.4-2.4" />
+      <path d="M10.5 18h3" />
+    </Svg>
+  )
+}
+
+export function IconCloudOff(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M6.5 18.5h9.2a3.8 3.8 0 0 0 1.9-7.1" />
+      <path d="M8.6 8.6A4.5 4.5 0 0 1 16 10.2" />
+      <path d="M4.5 18.5h2" />
+      <path d="M4 4l16 16" />
+    </Svg>
+  )
+}
