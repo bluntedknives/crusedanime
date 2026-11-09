@@ -11,6 +11,7 @@ import {
   IconChart,
   IconCompass,
   IconDots,
+  IconDownload,
   IconFlame,
   IconGrid2,
   IconHistory,
@@ -52,6 +53,7 @@ const MORE: RailItem[] = [
   { href: '/ratings', label: 'Ratings', icon: IconStar },
   { href: '/history', label: 'History', icon: IconHistory },
   { href: '/stats', label: 'Stats', icon: IconChart },
+  { href: '/downloads', label: 'Downloads', icon: IconDownload },
 ]
 
 export default function Sidebar({ covered = false }: { covered?: boolean }) {

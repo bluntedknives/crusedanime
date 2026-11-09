@@ -6,11 +6,30 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { IconArrowLeft, IconBookmark, IconBookmarkFilled, IconChevronLeft, IconChevronRight, IconRefresh } from './icons'
 import Player, { type PlayerPayload } from './Player'
 import EpisodeList from './EpisodeList'
+import DownloadButton from './DownloadButton'
 import { detailPath } from './PosterCard'
 import { coverLabel } from '@/lib/cover'
 import type { EpisodeInfo } from '@/lib/consumet'
 import { useHistory, usePrefs, useProgress, useWatchlist } from '@/lib/store'
+import { getDownload, localKeyFor, type DownloadMeta } from '@/lib/downloads'
 import { formatLabel, posterOf, scoreOf, titleOf, type Media } from '@/lib/anilist'
+
+/** A stored episode presented to the player as if it were a live source. */
+function offlinePayload(dl: DownloadMeta): PlayerPayload {
+  return {
+    provider: 'offline',
+    sources: dl.playlist ? [{ url: dl.playlist, quality: 'Offline', isM3U8: true }] : [],
+    subtitles: (dl.subtitles ?? []).map((s) => ({
+      url: s.url,
+      lang: s.lang,
+      label: s.label,
+      default: s.default,
+    })),
+    intro: dl.intro ?? null,
+    outro: dl.outro ?? null,
+    embedUrl: null,
+  }
+}
 
 interface Props {
   media: Media
@@ -64,6 +83,11 @@ export default function WatchClient({
   const [epsLoading, setEpsLoading] = useState(!initialEpisodes)
   const [nonce, setNonce] = useState(0)
   const [theater, setTheater] = useState(false)
+  /**
+   * Set when the episode is being played from a download rather than the live
+   * provider, so the source-resolution effect stands down.
+   */
+  const [offline, setOffline] = useState(false)
 
   const { get } = useProgress()
   const { toggle, has } = useWatchlist()
@@ -115,6 +139,24 @@ export default function WatchClient({
       setLoading(true)
       setError(null)
       setPayload(null)
+      setOffline(false)
+
+      const dlKey = localKeyFor(media.id, episode, type)
+      const dl = getDownload(dlKey)
+      const offlineNow = typeof navigator !== 'undefined' && navigator.onLine === false
+
+      // Offline, a stored episode is the only thing that can play — so skip the
+      // provider entirely rather than waiting for a request that cannot go out.
+      if (offlineNow) {
+        if (dl?.status === 'ready') {
+          setPayload(offlinePayload(dl))
+          setOffline(true)
+        } else {
+          setError('You are offline and this episode is not downloaded.')
+        }
+        setLoading(false)
+        return
+      }
 
       const params = new URLSearchParams({
         anilistId: String(media.id),
@@ -162,6 +204,13 @@ export default function WatchClient({
         // time". Both surface as an abort, but only the first should stay
         // silent — swallowing the second would leave the spinner up forever.
         if (signal.aborted) return
+        // The provider failed but the episode is stored: fall back to the
+        // download so a flaky source never blocks a viewer who has the file.
+        if (dl?.status === 'ready') {
+          setPayload(offlinePayload(dl))
+          setOffline(true)
+          return
+        }
         if ((err as Error).name === 'TimeoutError') {
           setError('The stream provider took too long to respond. Try again.')
           return
@@ -346,6 +395,19 @@ export default function WatchClient({
             </div>
 
             <div className="ml-auto flex items-center gap-1.5">
+              <DownloadButton
+                animeId={media.id}
+                animeTitle={title}
+                poster={posterOf(media)}
+                episode={episode}
+                totalEpisodes={totalEpisodes}
+                type={type}
+                malId={media.idMal}
+                genres={media.genres ?? []}
+                intro={payload?.intro ?? null}
+                outro={payload?.outro ?? null}
+                subtitleTracks={(payload?.subtitles ?? []).map((s) => ({ label: s.label, lang: s.lang }))}
+              />
               <button type="button" onClick={retry} className="btn-ghost h-9 px-3 text-xs">
                 <IconRefresh size={14} />
                 Reload
@@ -372,7 +434,7 @@ export default function WatchClient({
           <div className="mt-5">
             <p className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-accent-soft">
               Episode {episode}
-              {payload?.provider ? ` · ${payload.provider}` : ''}
+              {offline ? ' · Offline' : payload?.provider ? ` · ${payload.provider}` : ''}
             </p>
             <h1 className="mt-1 text-lg font-bold tracking-tight text-zinc-50 sm:text-2xl">
               {episodeMeta?.title?.trim() ? episodeMeta.title : title}

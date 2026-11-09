@@ -28,9 +28,14 @@ const PAGE_CACHE = `crused-pages-${VERSION}`
 const IMAGE_CACHE = `crused-images-${VERSION}`
 const API_CACHE = `crused-api-${VERSION}`
 const RUNTIME_CACHES = [STATIC_CACHE, PAGE_CACHE, IMAGE_CACHE, API_CACHE]
-const ALL_CACHES = [SHELL_CACHE, ...RUNTIME_CACHES]
 
 const OFFLINE_URL = '/offline'
+
+/** Downloaded media lives here; a dedicated, never-trimmed cache. */
+const DOWNLOAD_CACHE = 'crused-downloads-v1'
+const DOWNLOAD_PREFIX = '/__dl/'
+
+const ALL_CACHES = [SHELL_CACHE, DOWNLOAD_CACHE, ...RUNTIME_CACHES]
 
 /** Per-cache entry caps, so a long-lived install cannot grow without bound. */
 const LIMITS = {
@@ -88,13 +93,25 @@ async function trimCache(name, limit) {
   await Promise.all(keys.slice(0, keys.length - limit).map((k) => cache.delete(k)))
 }
 
+/**
+ * Whether a response may be stored.
+ *
+ * Cross-origin images fetched without CORS come back opaque — `ok` is false and
+ * `status` is 0 — but they are exactly the responses we want for offline art,
+ * so they are accepted too. Only genuine errors are rejected.
+ */
+function isCacheable(res) {
+  if (!res) return false
+  return res.ok || res.type === 'opaque'
+}
+
 /** Cache-first: serve the cached copy, refresh in the background. */
 async function staleWhileRevalidate(request, cacheName) {
   const cache = await caches.open(cacheName)
   const cached = await cache.match(request)
   const network = fetch(request)
     .then(async (res) => {
-      if (res && res.ok) {
+      if (isCacheable(res)) {
         await cache.put(request, res.clone())
         await trimCache(cacheName, LIMITS[cacheName])
       }
@@ -109,7 +126,7 @@ async function networkFirst(request, cacheName) {
   const cache = await caches.open(cacheName)
   try {
     const res = await fetch(request)
-    if (res && res.ok) {
+    if (isCacheable(res)) {
       await cache.put(request, res.clone())
       await trimCache(cacheName, LIMITS[cacheName])
     }
@@ -127,7 +144,7 @@ async function cacheFirst(request, cacheName) {
   const cached = await cache.match(request)
   if (cached) return cached
   const res = await fetch(request)
-  if (res && res.ok) {
+  if (isCacheable(res)) {
     await cache.put(request, res.clone())
     await trimCache(cacheName, LIMITS[cacheName])
   }
@@ -165,6 +182,19 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url)
   const sameOrigin = url.origin === self.location.origin
+
+  // Downloaded media: cache-only. These paths exist nowhere else — a miss is
+  // an evicted download, not something the network can answer — so this runs
+  // before the Range guard, since media elements may probe with a range.
+  if (sameOrigin && url.pathname.startsWith(DOWNLOAD_PREFIX)) {
+    event.respondWith(
+      caches
+        .open(DOWNLOAD_CACHE)
+        .then((cache) => cache.match(url.pathname))
+        .then((hit) => hit || new Response('Download not stored', { status: 404 })),
+    )
+    return
+  }
 
   // Seeking and media fetch send Range; never let the cache answer those.
   if (request.headers.has('range')) return
@@ -208,5 +238,34 @@ self.addEventListener('fetch', (event) => {
 
 /** The page asks a waiting worker to take over, then reloads. */
 self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting()
+  const data = event.data
+  if (data === 'SKIP_WAITING') {
+    self.skipWaiting()
+    return
+  }
+  // Ask the worker to fetch and store a page/image for offline. A programmatic
+  // fetch is not a navigation, so the SW's own navigation branch would never
+  // see it; the worker has to do the fetch itself.
+  if (data && data.type === 'CACHE_URLS' && Array.isArray(data.urls)) {
+    event.waitUntil(
+      (async () => {
+        const pageCache = await caches.open(PAGE_CACHE)
+        const imageCache = await caches.open(IMAGE_CACHE)
+        await Promise.all(
+          data.urls
+            .filter((u) => typeof u === 'string' && u.startsWith('/'))
+            .map(async (u) => {
+              try {
+                const res = await fetch(u)
+                if (!isCacheable(res)) return
+                const dest = res.headers.get('content-type')?.startsWith('image/') ? imageCache : pageCache
+                await dest.put(u, res.clone())
+              } catch {
+                /* best-effort */
+              }
+            }),
+        )
+      })(),
+    )
+  }
 })

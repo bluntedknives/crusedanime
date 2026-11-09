@@ -94,6 +94,7 @@ export default function TopBar({ covered = false }: { covered?: boolean }) {
                 { href: '/genres', label: 'Genres' },
                 { href: '/random', label: 'Random' },
                 { href: '/watchlist', label: 'Watchlist' },
+                { href: '/downloads', label: 'Downloads' },
                 { href: '/ratings', label: 'Ratings' },
                 { href: '/history', label: 'History' },
                 { href: '/stats', label: 'Stats' },
